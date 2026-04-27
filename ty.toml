@@ -1,0 +1,7 @@
+# Ty config for RedFlag Agents PH
+
+[environment]
+python-version = "3.11"
+
+[rules]
+ignore += ["invalid-return-type", "invalid-argument-type", "unresolved-attribute"]

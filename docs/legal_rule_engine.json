@@ -1,0 +1,43 @@
+{
+  "iiueeu_classifications": {
+    "I": {"name": "Illegal", "description": "Violates RA 12009/IRR", "severity_weight": 5},
+    "IR": {"name": "Irregular", "description": "Violates GPPB circulars/procedural rules", "severity_weight": 4},
+    "U": {"name": "Unnecessary", "description": "Not aligned with agency mandate", "severity_weight": 3},
+    "E": {"name": "Excessive", "description": "Price >30% above market rate", "severity_weight": 4},
+    "EX": {"name": "Extravagant", "description": "Luxury items without justification", "severity_weight": 4},
+    "UN": {"name": "Unconscionable", "description": "Grossly unreasonable expenditure", "severity_weight": 5}
+  },
+  "agent_red_flags": {
+    "scraper_agent": [
+      {"flag": "missing_philgeps_posting", "citation": "RA 12009 Sec 20.1", "law_source": "RA 12009", "iiueeu": "I", "severity": 5},
+      {"flag": "missing_app_posting", "citation": "RA 12009 IRR Rule III Sec 3", "law_source": "RA 12009 IRR", "iiueeu": "IR", "severity": 3}
+    ],
+    "price_analyst_agent": [
+      {"flag": "price_30pct_above_market", "citation": "COA 2023-004 Sec 4.2", "law_source": "COA 2023-004", "iiueeu": "E", "severity": 4},
+      {"flag": "budget_splitting", "citation": "RA 12009 Sec 26(c)", "law_source": "RA 12009", "iiueeu": "I", "severity": 5},
+      {"flag": "svp_over_threshold", "citation": "RA 12009 Sec 26(a)", "law_source": "RA 12009", "iiueeu": "I", "severity": 5},
+      {"flag": "bid_price_equals_abc", "citation": "RA 9184 IRR Sec 50.1", "law_source": "RA 9184 IRR", "iiueeu": "I", "severity": 5}
+    ],
+    "bid_analyzer_agent": [
+      {"flag": "less_than_3_bidders", "citation": "RA 9184 IRR Sec 52.1", "law_source": "RA 9184 IRR", "iiueeu": "IR", "severity": 4},
+      {"flag": "dummy_bidders", "citation": "COA 2023-004 Sec 5.1", "law_source": "COA 2023-004", "iiueeu": "I", "severity": 5},
+      {"flag": "alt_mode_no_hope_approval", "citation": "RA 12009 IRR Rule XVI Sec 2", "law_source": "RA 12009 IRR", "iiueeu": "I", "severity": 5}
+    ],
+    "doc_auditor_agent": [
+      {"flag": "missing_philgeps_registration", "citation": "COA 2023-004 Annex A Item 1", "law_source": "COA 2023-004", "iiueeu": "IR", "severity": 3},
+      {"flag": "missing_business_permit", "citation": "COA 2023-004 Annex A Item 2", "law_source": "COA 2023-004", "iiueeu": "IR", "severity": 3},
+      {"flag": "missing_bid_security", "citation": "RA 12009 IRR Sec 45.1", "law_source": "RA 12009 IRR", "iiueeu": "IR", "severity": 4}
+    ],
+    "alert_agent": [
+      {"flag": "illegal_disallowance", "citation": "RA 12009 Sec 65", "law_source": "RA 12009", "iiueeu": "I", "severity": 5},
+      {"flag": "excessive_disallowance", "citation": "COA 2023-004 Sec 4.2", "law_source": "COA 2023-004", "iiueeu": "E", "severity": 4}
+    ]
+  },
+  "thresholds": {
+    "competitive_bidding_min": 1000000,
+    "svp_max": 1000000,
+    "shopping_max": 500000,
+    "price_excess_threshold_pct": 30,
+    "min_bidders_open_bidding": 3
+  }
+}

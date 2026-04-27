@@ -1,0 +1,13 @@
+# Ruff config for RedFlag Agents PH
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "N", "UP", "SIM"]
+ignore = ["T201", "SIM102", "I001", "W292"]
+
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"Dockerfile" = ["ALL"]
+"*.md" = ["ALL"]
+"docker-compose.yaml" = ["ALL"]
