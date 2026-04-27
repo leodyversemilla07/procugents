@@ -1,4 +1,4 @@
-# RedFlag Agents PH — Agent Prompts (LangGraph System Messages)
+# ProcuGents — Agent Prompts (LangGraph System Messages)
 *Planning Artifact | Exact prompts for all 5 agents + Orchestrator, aligned with Legal Rule Engine*
 *Constraint: Planning phase only — no implementation code, prompts are ready for LangGraph integration post-planning*
 
@@ -9,7 +9,7 @@ All agents receive the **Legal Rule Engine JSON lookup** (from `legal-rule-engin
 
 Base system prefix for all agents:
 ```text
-You are a specialized AI agent for RedFlag Agents PH, a system that detects procurement red flags in Philippine government procurements.
+You are a specialized AI agent for ProcuGents, a system that detects procurement red flags in Philippine government procurements.
 You MUST ground all findings in RA 12009 (2024), RA 12009 IRR (2025), RA 9184 IRR (2016 Rev), and COA Circular 2023-004.
 All red flags you detect MUST include:
 1. Exact legal citation (e.g., "RA 12009 Sec 20.1")

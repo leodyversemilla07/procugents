@@ -33,6 +33,9 @@ cd ~/workspace/procugents
 # Install dependencies
 uv sync
 
+# Set API key for AI analysis (free at https://opencode.ai/settings/api-keys)
+export OPENCODE_API_KEY="your-key-here"
+
 # Run tests
 python -m pytest tests/ -v
 
@@ -45,6 +48,15 @@ python -m src.api.main
 # Run web UI
 cd web && pnpm dev
 ```
+
+## Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| OPENCODE_API_KEY | Free AI API from https://opencode.ai/settings/api-keys | No |
+| OPENAI_API_KEY | OpenAI API key (fallback) | No |
+| ANTHROPIC_API_KEY | Anthropic API key (fallback) | No |
+| POSTGRES_PASSWORD | PostgreSQL password | No (SQLite default) |
 
 ## API Usage
 

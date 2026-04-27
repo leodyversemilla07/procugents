@@ -8,7 +8,7 @@ from pydantic import BaseModel
 import uvicorn
 from typing import Any
 
-app = FastAPI(title="RedFlag Agents PH API")
+app = FastAPI(title="ProcuGents API")
 
 # Enable CORS for dashboard
 app.add_middleware(
@@ -174,6 +174,8 @@ def get_analyses(limit: int = 50):
                     "contract_id": a.contract_id,
                     "contract_description": a.contract_description,
                     "contract_amount": a.contract_amount,
+                    "agency": a.agency or "",
+                    "source": a.source or "",
                     "status": a.status,
                     "anomalies_count": len(a.anomalies) if a.anomalies else 0,
                     "created_at": a.created_at.isoformat() if a.created_at else None,
@@ -203,6 +205,8 @@ def get_analysis_detail(analysis_id: int):
                 "contract_id": analysis.contract_id,
                 "contract_description": analysis.contract_description,
                 "contract_amount": analysis.contract_amount,
+                "agency": analysis.agency or "",
+                "source": analysis.source or "",
                 "status": analysis.status,
                 "legal_findings": analysis.legal_findings or {},
                 "price_findings": analysis.price_findings or {},
@@ -224,7 +228,7 @@ def get_analysis_detail(analysis_id: int):
 def crawl_agency(agency: str | None = None):
     """Auto-crawl and analyze PhilGEPS contracts for an agency."""
     import asyncio
-    from scripts.auto_crawl import auto_crawl_agency, auto_scan_all
+    from src.scripts.auto_crawl import auto_crawl_agency, auto_scan_all
     
     try:
         if agency:

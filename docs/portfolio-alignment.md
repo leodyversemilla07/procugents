@@ -1,4 +1,4 @@
-# RedFlag Agents PH — Portfolio Alignment
+# ProcuGents — Portfolio Alignment
 *Final Planning Artifact | Maps project phases to target job requirements*
 *Target Roles: Sovrun Multi-Agent LLM Engineer, Agentium Labs MCP+LLM Engineer, Senior AI Agent Engineer*
 
@@ -12,7 +12,7 @@ Required Skills:
 - MCP (Model Context Protocol) integration (✅ 5 local MCP servers, A2A ↔ MCP integration)
 - PostgreSQL/Redis for state management (✅ JSONB + Redis checkpointing)
 - LLM tool calling & agentic workflows (✅ Exa API, httpx scraping, Chroma vector DB)
-- Portfolio project demonstrating multi-agent collaboration (✅ RedFlag Agents PH)
+- Portfolio project demonstrating multi-agent collaboration (✅ ProcuGents)
 
 ### Agentium Labs — MCP + LLM Integration Engineer
 Required Skills:
@@ -66,7 +66,7 @@ Required Skills:
 |-------------|-----------------------|
 | Portfolio project | Public GitHub repo with all planning + implementation artifacts |
 | Multi-agent demo | Video walkthrough of agents processing a ₱2M illegal procurement |
-| Job application | Tailored resumes citing RedFlag Agents PH as core qualification |
+| Job application | Tailored resumes citing ProcuGents as core qualification |
 | Regulatory compliance | COA-formatted alert reports (Alert Agent output) |
 
 ---

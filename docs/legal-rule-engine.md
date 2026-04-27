@@ -1,4 +1,4 @@
-# RedFlag Agents PH — Legal Rule Engine
+# ProcuGents — Legal Rule Engine
 *Planning Artifact | Maps all agent red flags to exact legal citations, IIUEEU classifications, and severity*
 *Sources: RA 12009 (2024), RA 12009 IRR (2025), RA 9184 IRR (2016 Rev, 2024 Update), COA Circular 2023-004, GPPB Circulars 2025*
 

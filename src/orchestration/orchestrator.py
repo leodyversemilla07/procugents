@@ -45,6 +45,7 @@ class ProcurementState(TypedDict, total=False):
 SVP_THRESHOLD = 1_000_000  # PHP 1M for Small Value Procurement
 
 # LLM Configuration - set via environment variable
+# Get your free API key at https://opencode.ai/settings/api-keys
 OPENCODE_API_KEY = os.environ.get("OPENCODE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
@@ -332,6 +333,8 @@ async def analyze_procurement(
     contract_id: str,
     contract_description: str,
     contract_amount: float,
+    agency: str = "",
+    source: str = "",
     svp_category: str = "general",
     save_to_db: bool = False,
 ) -> dict[str, Any]:
@@ -342,6 +345,7 @@ async def analyze_procurement(
         "contract_id": contract_id,
         "contract_description": contract_description,
         "contract_amount": contract_amount,
+        "agency": agency,
         "svp_category": svp_category,
         "legal_findings": {},
         "price_findings": {},
@@ -378,6 +382,8 @@ async def analyze_procurement(
                     contract_id=contract_id,
                     contract_description=contract_description,
                     contract_amount=contract_amount,
+                    agency=agency,
+                    source=source,
                     svp_category=svp_category,
                     status=result.get("status"),
                     legal_findings=result.get("legal_findings"),

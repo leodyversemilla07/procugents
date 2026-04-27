@@ -59,6 +59,9 @@ async def auto_crawl_agency(agency: str, keyword: str | None = None) -> dict[str
                 contract_id=proc.get("notice_id", f"PO-{proc.get('title', '')[:10]}"),
                 contract_description=title,
                 contract_amount=amount,
+                agency=proc.get("agency", ""),
+                source="PhilGEPS",
+                svp_category="general",
                 save_to_db=True,
             )
             

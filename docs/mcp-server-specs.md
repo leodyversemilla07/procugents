@@ -1,4 +1,4 @@
-# RedFlag Agents PH — MCP Server Specs
+# ProcuGents — MCP Server Specs
 *Planning Artifact | MCP server tool definitions, input/output schemas, agent mappings*
 *Protocol: MCP 1.0 (local stdio transport, per native-mcp skill), core to tech stack per PLAN.md*
 

@@ -1,5 +1,5 @@
 """
-Database models and connection for RedFlag Agents PH.
+Database models and connection for ProcuGents.
 Supports both PostgreSQL (production) and SQLite (development).
 """
 
@@ -12,12 +12,11 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy import Column, DateTime, Enum, Float, Integer, String, Text, create_engine
 # Use JSON for SQLite, JSONB for PostgreSQL
-import os
 if os.environ.get("POSTGRES_PASSWORD"):
     from sqlalchemy.dialects.postgresql import JSONB as JSON_TYPE
 else:
     from sqlalchemy import JSON as JSON_TYPE
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import declarative_base, Session, sessionmaker
 
 
 class AnalysisStatus(StrEnum):
@@ -30,8 +29,7 @@ class AnalysisStatus(StrEnum):
     ERROR = "error"
 
 
-class Base(DeclarativeBase):
-    pass
+Base = declarative_base()
 
 
 class ProcurementAnalysis(Base):
@@ -43,6 +41,7 @@ class ProcurementAnalysis(Base):
     contract_description = Column(Text, nullable=False)
     contract_amount = Column(Float, nullable=False)
     agency = Column(String(200))
+    source = Column(String(50))
     svp_category = Column(String(50))
 
     # Results
@@ -102,8 +101,7 @@ def _get_database_url() -> str:
         return f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
 
     # Use SQLite for development
-    db_path = os.environ.get("DATABASE_PATH", "/home/ubuntu/workspace/procure-agents/procure.db")
-    return f"sqlite:///{db_path}"
+    return "sqlite:///procugents.db"
 
 
 DATABASE_URL = _get_database_url()
@@ -146,6 +144,7 @@ class ProcurementCreate(BaseModel):
     contract_description: str
     contract_amount: float
     agency: str = ""
+    source: str = ""
     svp_category: str = "general"
 
 
@@ -155,6 +154,7 @@ class AnalysisResponse(BaseModel):
     contract_description: str
     contract_amount: float
     agency: str = ""
+    source: str = ""
     status: str
     legal_findings: dict[str, Any] | None = None
     price_findings: dict[str, Any] | None = None

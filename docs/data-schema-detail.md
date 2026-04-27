@@ -1,4 +1,4 @@
-# RedFlag Agents PH — Data Schema Detail
+# ProcuGents — Data Schema Detail
 *Planning Artifact | Full PostgreSQL schema + Redis key structures, aligned with Agent Prompts + Legal Rule Engine*
 *Constraint: Planning phase only — schema definitions, no implementation code*
 

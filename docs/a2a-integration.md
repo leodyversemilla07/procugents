@@ -1,4 +1,4 @@
-# RedFlag Agents PH — A2A Integration
+# ProcuGents — A2A Integration
 *Planning Artifact | A2A (Agent-to-Agent Protocol) v1.0 integration, Agent Cards, task delegation*
 *Protocol: A2A v1.0 (Google/Anthropic), core architecture per PLAN.md (no phasing)*
 

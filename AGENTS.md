@@ -4,7 +4,7 @@ Philippine Government Procurement Anomaly Detection using Multi-Agent AI.
 
 ## Overview
 
-RedFlag Agents PH is an AI-powered system that detects procurement anomalies in Philippine government contracts. It uses multi-agent orchestration to analyze contracts against RA 12009 (2024) thresholds and detect price inflation, legal violations, and compliance issues.
+ProcuGents is an AI-powered system that detects procurement anomalies in Philippine government contracts. It uses multi-agent orchestration to analyze contracts against RA 12009 (2024) thresholds and detect price inflation, legal violations, and compliance issues.
 
 ## Project Structure
 
