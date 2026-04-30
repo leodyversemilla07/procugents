@@ -1,7 +1,9 @@
-# Ty config for RedFlag Agents PH
+# Ty config for ProcuGents
 
 [environment]
 python-version = "3.11"
 
 [rules]
-ignore += ["invalid-return-type", "invalid-argument-type", "unresolved-attribute"]
+invalid-return-type = "ignore"
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"

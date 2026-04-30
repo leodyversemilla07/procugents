@@ -9,7 +9,7 @@ export async function GET() {
     })
     const data = await res.json()
     return NextResponse.json(data)
-  } catch (error) {
+  } catch {
     // Return defaults if API not running
     return NextResponse.json({
       total_analyzed: 0,

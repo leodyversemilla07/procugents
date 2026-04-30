@@ -84,13 +84,13 @@ def _search_mock(keyword: str, agency: str | None = None) -> list[dict]:
     """Search mock data by keyword and optional agency filter."""
     results = []
     keyword_lower = keyword.lower()
-    
+
     for item in MOCK_PROCUREMENTS:
         # Match keyword in title
         if keyword_lower in item["title"].lower():
             if agency is None or agency.lower() in item["agency"].lower():
                 results.append(item)
-    
+
     return results
 
 
@@ -98,11 +98,11 @@ def _search_by_agency(agency_name: str) -> list[dict]:
     """Search by agency name."""
     results = []
     agency_lower = agency_name.lower()
-    
+
     for item in MOCK_PROCUREMENTS:
         if agency_lower in item["agency"].lower():
             results.append(item)
-    
+
     return results
 
 
@@ -117,8 +117,8 @@ async def search_philgeps(
     import httpx
 
     # Try real PhilGEPS first (if accessible)
-    PHILGEPS_URL = "https://philgeps.gov.ph"
-    
+    philgeps_url = "https://philgeps.gov.ph"
+
     try:
         params = {"q": keyword, "category": category}
         if year:
@@ -130,7 +130,7 @@ async def search_philgeps(
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{PHILGEPS_URL}/search",
+                f"{philgeps_url}/search",
                 params=params,
                 headers=headers,
                 timeout=10.0,
@@ -162,7 +162,7 @@ async def search_philgeps(
 
     # Fall back to mock data for testing
     results = _search_mock(keyword)
-    
+
     return {
         "keyword": keyword,
         "category": category,
@@ -182,8 +182,8 @@ async def get_agency_procurement(
     """
     import httpx
 
-    PHILGEPS_URL = "https://philgeps.gov.ph"
-    
+    philgeps_url = "https://philgeps.gov.ph"
+
     # Try real PhilGEPS first
     try:
         params = {"agency": agency_name, "limit": limit}
@@ -191,7 +191,7 @@ async def get_agency_procurement(
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{PHILGEPS_URL}/agency/search",
+                f"{philgeps_url}/agency/search",
                 params=params,
                 headers=headers,
                 timeout=10.0,
@@ -229,21 +229,21 @@ async def check_notice_compliance(notice_id: str) -> dict:
     Check PhilGEPS posting compliance for a specific notice.
     """
     import httpx
-    
-    PHILGEPS_URL = "https://philgeps.gov.ph"
-    
+
+    philgeps_url = "https://philgeps.gov.ph"
+
     # Try real PhilGEPS compliance check
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{PHILGEPS_URL}/notice/{notice_id}",
+                f"{philgeps_url}/notice/{notice_id}",
                 timeout=10.0,
             )
             if response.status_code == 200:
                 return {"notice_id": notice_id, "compliant": True}
     except Exception:
         pass
-    
+
     # Check against mock data
     for item in MOCK_PROCUREMENTS:
         if item["notice_id"] == notice_id:
@@ -258,7 +258,7 @@ async def check_notice_compliance(notice_id: str) -> dict:
                 "compliant": True,
                 "source": "mock_data",
             }
-    
+
     return {
         "notice_id": notice_id,
         "compliant": False,

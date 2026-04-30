@@ -85,13 +85,13 @@ def _search_mock(keyword: str, agency: str | None = None) -> list[dict]:
     """Search mock data by keyword and optional agency filter."""
     results = []
     keyword_lower = keyword.lower()
-    
+
     for item in MOCK_PROCUREMENTS:
         # Match keyword in title
         if keyword_lower in item["title"].lower():
             if agency is None or agency.lower() in item["agency"].lower():
                 results.append(item)
-    
+
     return results
 
 
@@ -158,7 +158,7 @@ async def search_philgeps(
 
     # Fall back to mock data for testing
     results = _search_mock(keyword)
-    
+
     return {
         "keyword": keyword,
         "category": category,
@@ -230,15 +230,15 @@ async def check_notice_compliance(
 ) -> dict[str, Any]:
     """
     Check PhilGEPS posting compliance for a specific notice.
-    
+
     Args:
         notice_id: PhilGEPS notice reference number
-        
+
     Returns:
         Compliance check results
     """
     import httpx
-    
+
     # Try real PhilGEPS compliance check
     try:
         async with httpx.AsyncClient() as client:
@@ -251,7 +251,7 @@ async def check_notice_compliance(
                 return {"notice_id": notice_id, "compliant": True}
     except Exception:
         pass
-    
+
     # Check against mock data
     for item in MOCK_PROCUREMENTS:
         if item["notice_id"] == notice_id:
@@ -266,7 +266,7 @@ async def check_notice_compliance(
                 "compliant": True,
                 "source": "mock_data",
             }
-    
+
     return {
         "notice_id": notice_id,
         "compliant": False,

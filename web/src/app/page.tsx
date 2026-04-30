@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty"
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination"
+import Image from "next/image"
 import Link from "next/link"
 import { Bot, FileText, ArrowRight } from "lucide-react"
 
@@ -31,6 +32,16 @@ interface AnalysisListItem {
 
 const ITEMS_PER_PAGE = 10
 
+async function fetchStatsData(): Promise<Stats> {
+  const res = await fetch("/api/stats")
+  return res.json()
+}
+
+async function fetchAnalysesData(): Promise<AnalysisListItem[]> {
+  const res = await fetch("/api/analyses")
+  return res.json()
+}
+
 export default function Dashboard() {
   const [crawling, setCrawling] = useState(false)
   const [crawlStatus, setCrawlStatus] = useState("")
@@ -43,29 +54,30 @@ export default function Dashboard() {
   })
   const [page, setPage] = useState(1)
 
-  const fetchStats = async () => {
-    try {
-      const res = await fetch("/api/stats")
-      const data = await res.json()
-      setStats(data)
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
-  const fetchAnalyses = async () => {
-    try {
-      const res = await fetch("/api/analyses")
-      const data = await res.json()
-      setAnalyses(data)
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
   useEffect(() => {
-    fetchStats()
-    fetchAnalyses()
+    let cancelled = false
+
+    async function loadDashboard() {
+      try {
+        const [statsData, analysesData] = await Promise.all([
+          fetchStatsData(),
+          fetchAnalysesData(),
+        ])
+
+        if (!cancelled) {
+          setStats(statsData)
+          setAnalyses(analysesData)
+        }
+      } catch (error) {
+        console.error(error)
+      }
+    }
+
+    void loadDashboard()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const triggerCrawl = async () => {
@@ -73,11 +85,24 @@ export default function Dashboard() {
     setCrawlStatus("Scanning PhilGEPS for anomalies...")
     try {
       const res = await fetch("/api/crawl", { method: "POST" })
+      if (!res.ok) {
+        throw new Error(`Crawl failed: ${res.status}`)
+      }
+
       const data = await res.json()
       setCrawlStatus(`Analyzed ${data.total_analyzed} contracts — found ${data.total_anomalies} anomalies`)
-      fetchStats()
-      fetchAnalyses()
-    } catch (e) {
+
+      try {
+        const [statsData, analysesData] = await Promise.all([
+          fetchStatsData(),
+          fetchAnalysesData(),
+        ])
+        setStats(statsData)
+        setAnalyses(analysesData)
+      } catch (error) {
+        console.error("Failed to refresh dashboard after crawl", error)
+      }
+    } catch {
       setCrawlStatus("Scan failed - check backend is running")
     }
     setCrawling(false)
@@ -92,7 +117,7 @@ export default function Dashboard() {
       {/* Header */}
       <header className="mb-8">
         <h1 className="text-2xl font-semibold flex items-center gap-3">
-          <img src="/logo.png" alt="ProcuGents" className="h-8 w-auto" />
+          <Image src="/logo.png" alt="ProcuGents" width={32} height={32} className="h-8 w-auto" priority />
           ProcuGents
         </h1>
         <p className="text-muted-foreground mt-1">

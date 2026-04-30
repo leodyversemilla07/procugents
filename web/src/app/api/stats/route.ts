@@ -7,7 +7,7 @@ export async function GET() {
     const res = await fetch(`${API_BASE}/api/stats`)
     const data = await res.json()
     return NextResponse.json(data)
-  } catch (error) {
+  } catch {
     return NextResponse.json({
       total_analyzed: 0,
       anomalies_found: 0,

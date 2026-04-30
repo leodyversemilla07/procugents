@@ -26,7 +26,8 @@ interface ContractDetail {
   price_findings: {
     flag: string
     reason: string
-    baseline: number
+    baseline: number | null
+    inflation_threshold?: number | null
     amount: number
   }
   anomalies: { type: string; severity: string; description: string }[]
@@ -184,12 +185,20 @@ export default function ContractDetailPage() {
                   Within market baseline
                 </AlertDescription>
               </Alert>
-            ) : (
+            ) : contract.price_findings?.flag === "potential_inflation" ? (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Potential Inflation</AlertTitle>
                 <AlertDescription>
                   {contract.price_findings?.reason}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Market Data Unavailable</AlertTitle>
+                <AlertDescription>
+                  {contract.price_findings?.reason || "No market baseline available for comparison"}
                 </AlertDescription>
               </Alert>
             )}

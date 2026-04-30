@@ -51,6 +51,13 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 
+def get_cached_market_price(item_name: str) -> float | None:
+    """Read a cached market price when Redis is available."""
+    from src.services.cache import get_cached_market_price as read_cached_market_price
+
+    return read_cached_market_price(item_name)
+
+
 def get_llm():
     """Get configured LLM with fallback on rate limit."""
     opencode_key = os.environ.get("OPENCODE_API_KEY")
@@ -59,7 +66,7 @@ def get_llm():
 
     if opencode_key:
         from langchain_openai import ChatOpenAI
-        
+
         # Try Minimax first
         try:
             llm = ChatOpenAI(
@@ -77,12 +84,11 @@ def get_llm():
             # Rate limited or error - try Nemotron fallback
             error_msg = str(e).lower()
             if "rate" in error_msg or "429" in error_msg or "limit" in error_msg:
-                print(f"Minimax rate limited, trying Nemotron fallback...")
-            
+                logger.info("Minimax rate limited, trying Nemotron fallback...")
+
             # Try Nemotron 3 Super Free as fallback
             try:
                 # Use OpenCode with Nemotron model
-                from langchain_openai import ChatOpenAI
                 return ChatOpenAI(
                     model="nvidia/nemotron-3-super-nemotron-3-super-4b",
                     api_key=opencode_key,
@@ -91,9 +97,9 @@ def get_llm():
                     temperature=0,
                     max_retries=1,
                 )
-            except:
+            except Exception:
                 pass  # Fall through to try other providers
-    
+
     if openai_key:
         from langchain_openai import ChatOpenAI
 
@@ -106,7 +112,7 @@ def get_llm():
         from langchain_anthropic import ChatAnthropic
 
         return ChatAnthropic(
-            model="claude-3-haiku-20240307",
+            model_name="claude-3-haiku-20240307",
             api_key=anthropic_key,
             temperature=0,
         )
@@ -121,14 +127,13 @@ def legal_check_node(state: ProcurementState) -> ProcurementState:
 
     if amount > SVP_THRESHOLD:
         violations.append(f"Amount exceeds SVP threshold (PHP {SVP_THRESHOLD:,})")
-        # Check if competitive bidding required (for amounts > 50K)
-        if amount > 50_000:
-            violations.append("Requires competitive bidding (amount > PHP 50,000)")
+        violations.append(f"Requires competitive bidding (amount > PHP {SVP_THRESHOLD:,})")
 
     state["legal_findings"] = {
         "threshold_compliant": is_compliant,
         "required_process": "competitive bidding" if amount > SVP_THRESHOLD else "small value procurement",
         "threshold": SVP_THRESHOLD,
+        "philgeps_posting_required": amount > 50_000,
         "violations": violations,
         "law": "RA 12009 (2024)",
     }
@@ -141,25 +146,34 @@ def price_analysis_node(state: ProcurementState) -> ProcurementState:
     amount = state.get("contract_amount", 0)
     description = state.get("contract_description", "").lower()
 
-    # Try cache first for market price
-    baseline = amount * 0.7  # Default baseline
-    source = "default_baseline"
+    baseline = None
+    inflation_threshold = None
+    source = "unavailable"
 
     try:
-        from cache import get_cached_market_price
         cached = get_cached_market_price(description)
-        if cached:
-            baseline = cached * 0.9  # Allow 10% margin
+        if cached is not None:
+            baseline = cached
+            inflation_threshold = cached * 1.3
             source = "cached_market_price"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Market price cache unavailable: %s", e)
 
-    is_inflated = amount > baseline
+    if inflation_threshold is None:
+        flag = "unknown"
+        reason = "No market baseline available for comparison"
+    elif amount > inflation_threshold:
+        flag = "potential_inflation"
+        reason = "Price exceeds market baseline by more than 30%"
+    else:
+        flag = "normal"
+        reason = "Price within market baseline allowance"
 
     state["price_findings"] = {
-        "flag": "potential_inflation" if is_inflated else "normal",
-        "reason": "Price exceeds market baseline" if is_inflated else "Price within normal range",
+        "flag": flag,
+        "reason": reason,
         "baseline": baseline,
+        "inflation_threshold": inflation_threshold,
         "amount": amount,
         "source": source,
     }
@@ -170,20 +184,19 @@ def price_analysis_node(state: ProcurementState) -> ProcurementState:
 def scraping_node(state: ProcurementState) -> ProcurementState:
     """Node: Scrape PhilGEPS for related contracts."""
     description = state.get("contract_description", "")
-    contract_amount = state.get("contract_amount", 0)
     agency = state.get("agency", "")
-    
+
     # Try to use PhilGEPS scraper
     try:
-        from src.servers.mcp.philgeps_data import search_philgeps, get_agency_procurement
+        from src.servers.mcp.philgeps_data import get_agency_procurement, search_philgeps
         import asyncio
-        
+
         # Search for related procurements
         if agency:
             result = asyncio.run(get_agency_procurement(agency_name=agency, limit=5))
         else:
             result = asyncio.run(search_philgeps(keyword=description, category="goods"))
-        
+
         state["scraping_results"] = {
             "results": result.get("results", []),
             "source": result.get("source", "unknown"),
@@ -197,7 +210,7 @@ def scraping_node(state: ProcurementState) -> ProcurementState:
             "searched": description,
             "note": f"Scraper unavailable: {str(e)[:50]}",
         }
-    
+
     state["status"] = AnalysisStatus.SCRAPING
     return state
 
@@ -253,7 +266,7 @@ Return a JSON analysis with:
             "available": True,
             "anomalies": result.get("anomalies_found", []),
             "risk_level": result.get("risk_level", "low"),
-"recommendations": result.get("recommendations", []),
+            "recommendations": result.get("recommendations", []),
         }
     except Exception as e:
         state["llm_analysis"] = {
@@ -294,7 +307,7 @@ def alert_node(state: ProcurementState) -> ProcurementState:
         {"title": a["type"], "severity": a["severity"], "description": a["description"]}
         for a in anomalies
     ]
-    state["status"] = AnalysisStatus.ALERTING
+    state["status"] = AnalysisStatus.ALERTING if anomalies else AnalysisStatus.COMPLETED
     return state
 
 
@@ -379,17 +392,19 @@ async def analyze_procurement(
                 init_db()
                 with get_db() as db:
                     analysis = ProcurementAnalysis(
-                    contract_id=contract_id,
-                    contract_description=contract_description,
-                    contract_amount=contract_amount,
-                    agency=agency,
-                    source=source,
-                    svp_category=svp_category,
-                    status=result.get("status"),
-                    legal_findings=result.get("legal_findings"),
-                    price_findings=result.get("price_findings"),
-                    anomalies=result.get("anomalies", []),
-                    alerts_created=result.get("alerts_created", []),
+                        contract_id=contract_id,
+                        contract_description=contract_description,
+                        contract_amount=contract_amount,
+                        agency=agency,
+                        source=source,
+                        svp_category=svp_category,
+                        status=result.get("status"),
+                        legal_findings=result.get("legal_findings"),
+                        price_findings=result.get("price_findings"),
+                        scraping_results=result.get("scraping_results"),
+                        llm_analysis=result.get("llm_analysis"),
+                        anomalies=result.get("anomalies", []),
+                        alerts_created=result.get("alerts_created", []),
                     )
                     db.add(analysis)
                 output["saved"] = True

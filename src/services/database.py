@@ -4,8 +4,9 @@ Supports both PostgreSQL (production) and SQLite (development).
 """
 
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -32,6 +33,11 @@ class AnalysisStatus(StrEnum):
 Base = declarative_base()
 
 
+def utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(UTC)
+
+
 class ProcurementAnalysis(Base):
     """Table for storing procurement analysis results."""
     __tablename__ = "procurement_analysis"
@@ -55,8 +61,8 @@ class ProcurementAnalysis(Base):
     error = Column(Text)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class Alert(Base):
@@ -71,7 +77,7 @@ class Alert(Base):
     contract_id = Column(String(100), index=True)
     status = Column(String(20), default="pending")
     resolution_notes = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     resolved_at = Column(DateTime, nullable=True)
 
 
@@ -85,7 +91,7 @@ class Agency(Base):
     uacs_code = Column(String(50))
     region = Column(String(50))
     category = Column(String(50))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 
 # Database URL - supports both PostgreSQL and SQLite
@@ -120,7 +126,7 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 @contextmanager
-def get_db() -> Session:
+def get_db() -> Iterator[Session]:
     """Get database session with automatic cleanup."""
     db = SessionLocal()
     try:

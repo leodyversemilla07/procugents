@@ -6,7 +6,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-from typing import Any
 
 app = FastAPI(title="ProcuGents API")
 
@@ -72,9 +71,9 @@ class A2ATaskRequest(BaseModel):
 async def create_task(request: A2ATaskRequest):
     """A2A: Submit a task for processing."""
     from src.servers.a2a_server import TaskMessage
-    
+
     server = get_a2a_server()
-    
+
     task = TaskMessage(
         task_id=request.task_id,
         message=request.message,
@@ -84,7 +83,7 @@ async def create_task(request: A2ATaskRequest):
             "description": request.description,
         },
     )
-    
+
     result = await server.handle_task(task)
     return result
 
@@ -102,32 +101,30 @@ def get_task(task_id: str):
 @app.get("/api/stats")
 def get_stats():
     """Get dashboard statistics from database."""
-    from src.services.database import get_db, init_db, ProcurementAnalysis
     from sqlalchemy import func
-    
+
+    from src.services.database import AnalysisStatus, ProcurementAnalysis, get_db, init_db
+
     init_db()
     try:
         with get_db() as db:
             total = db.query(func.count(ProcurementAnalysis.id)).scalar() or 0
-            with_anomalies = db.query(func.count(ProcurementAnalysis.id)).filter(
-                ProcurementAnalysis.anomalies != "[]"
-            ).scalar() or 0
             active_alerts = db.query(func.count(ProcurementAnalysis.id)).filter(
-                ProcurementAnalysis.status == "alerting"
+                ProcurementAnalysis.status == AnalysisStatus.ALERTING
             ).scalar() or 0
-            
-            # Calculate compliance rate
+            with_anomalies = active_alerts
+
             compliance_rate = 0.0
             if total > 0:
                 compliance_rate = round((total - with_anomalies) / total * 100, 1)
-            
+
             return StatsResponse(
                 total_analyzed=total,
                 anomalies_found=with_anomalies,
                 active_alerts=active_alerts,
                 compliance_rate=compliance_rate,
             )
-    except Exception as e:
+    except Exception:
         # Return defaults if DB not available
         return StatsResponse(
             total_analyzed=0,
@@ -142,15 +139,17 @@ def analyze(request: ProcurementRequest):
     """Analyze a procurement contract."""
     import asyncio
     from src.orchestration.orchestrator import analyze_procurement
-    
+
     try:
-        result = asyncio.run(analyze_procurement(
-            contract_id=request.contract_id,
-            contract_description=request.contract_description,
-            contract_amount=request.contract_amount,
-            svp_category=request.svp_category,
-            save_to_db=True,
-        ))
+        result = asyncio.run(
+            analyze_procurement(
+                contract_id=request.contract_id,
+                contract_description=request.contract_description,
+                contract_amount=request.contract_amount,
+                svp_category=request.svp_category,
+                save_to_db=True,
+            )
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -160,14 +159,14 @@ def analyze(request: ProcurementRequest):
 def get_analyses(limit: int = 50):
     """Get all analyses from database."""
     from src.services.database import get_db, init_db, ProcurementAnalysis
-    
+
     init_db()
     try:
         with get_db() as db:
             analyses = db.query(ProcurementAnalysis).order_by(
                 ProcurementAnalysis.created_at.desc()
             ).limit(limit).all()
-            
+
             return [
                 {
                     "id": a.id,
@@ -182,7 +181,7 @@ def get_analyses(limit: int = 50):
                 }
                 for a in analyses
             ]
-    except Exception as e:
+    except Exception:
         return []
 
 
@@ -190,17 +189,17 @@ def get_analyses(limit: int = 50):
 def get_analysis_detail(analysis_id: int):
     """Get detailed analysis by ID."""
     from src.services.database import get_db, init_db, ProcurementAnalysis
-    
+
     init_db()
     try:
         with get_db() as db:
             analysis = db.query(ProcurementAnalysis).filter(
                 ProcurementAnalysis.id == analysis_id
             ).first()
-            
+
             if not analysis:
                 raise HTTPException(status_code=404, detail="Analysis not found")
-            
+
             return {
                 "contract_id": analysis.contract_id,
                 "contract_description": analysis.contract_description,
@@ -229,12 +228,9 @@ def crawl_agency(agency: str | None = None):
     """Auto-crawl and analyze PhilGEPS contracts for an agency."""
     import asyncio
     from src.scripts.auto_crawl import auto_crawl_agency, auto_scan_all
-    
+
     try:
-        if agency:
-            result = asyncio.run(auto_crawl_agency(agency))
-        else:
-            result = asyncio.run(auto_scan_all())
+        result = asyncio.run(auto_crawl_agency(agency)) if agency else asyncio.run(auto_scan_all())
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
