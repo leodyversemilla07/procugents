@@ -183,9 +183,3 @@ async def check_notice_compliance(notice_id: str) -> dict[str, Any]:
         "reason": "Notice not found in PhilGEPS",
         "source": "mock_data",
     }
-
-
-# Backwards-compat aliases for callers that imported the private helpers.
-_search_mock = _search_mock
-_search_by_agency = _find_by_agency
-MOCK_PROCUREMENTS = __import__("src.servers.mcp.philgeps_mock", fromlist=["MOCK_PROCUREMENTS"]).MOCK_PROCUREMENTS

@@ -6,23 +6,13 @@ Coordinates multi-agent workflows for procurement anomaly detection.
 import asyncio
 import logging
 import os
-from enum import StrEnum
 from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from src.services.database import AnalysisStatus  # single source of truth
+
 logger = logging.getLogger(__name__)
-
-
-class AnalysisStatus(StrEnum):
-    """Workflow status states."""
-    PENDING = "pending"
-    LEGAL_CHECK = "legal_check"
-    PRICE_CHECK = "price_check"
-    SCRAPING = "scraping"
-    ALERTING = "alerting"
-    COMPLETED = "completed"
-    ERROR = "error"
 
 
 class ProcurementState(TypedDict, total=False):

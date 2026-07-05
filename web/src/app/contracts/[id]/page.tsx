@@ -44,7 +44,7 @@ export default function ContractDetailPage() {
 
   useEffect(() => {
     if (!id) return
-    fetch(`/api/contracts/${id}`)
+    fetch(`/api/analyses/${id}`)
       .then(res => res.json())
       .then(data => {
         setContract(data)

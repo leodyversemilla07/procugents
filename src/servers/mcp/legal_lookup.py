@@ -54,9 +54,18 @@ def list_flags_by_agent(agent_name: str) -> list[dict]:
     Returns:
         List of flag dicts with flag, citation, iiueeu, severity
     """
-    # Normalize agent name to match JSON keys (remove _agent suffix if present)
-    key = agent_name.replace("_agent", "")
-    return _legal_data["agent_red_flags"].get(key, [])
+    # JSON keys include the `_agent` suffix (e.g. "price_analyst_agent"); accept
+    # either form so callers don't have to know the wire format.
+    if agent_name in _legal_data["agent_red_flags"]:
+        return _legal_data["agent_red_flags"][agent_name]
+    key = agent_name.removesuffix("_agent")
+    if key in _legal_data["agent_red_flags"]:
+        return _legal_data["agent_red_flags"][key]
+    # Last resort: try appending _agent back.
+    with_suffix = f"{key}_agent"
+    if with_suffix in _legal_data["agent_red_flags"]:
+        return _legal_data["agent_red_flags"][with_suffix]
+    return []
 
 
 @mcp.tool()
