@@ -30,5 +30,7 @@ EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-# Run migrations and start API server
-CMD ["python", "api/main.py"]
+# Run migrations and start API server.
+# Use `-m` so `src/` resolves as a package regardless of WORKDIR layout;
+# `python api/main.py` would 404 because the file lives at /app/src/api/.
+CMD ["python", "-m", "src.api.main"]

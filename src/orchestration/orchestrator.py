@@ -3,6 +3,7 @@ LangGraph Orchestrator for RedFlag Agents PH.
 Coordinates multi-agent workflows for procurement anomaly detection.
 """
 
+import asyncio
 import logging
 import os
 from enum import StrEnum
@@ -67,9 +68,10 @@ def get_llm():
     if opencode_key:
         from langchain_openai import ChatOpenAI
 
-        # Try Minimax first
+        # Try Minimax first (no eager ping — every live call hits the API
+        # and would burn the user's free quota before the first real request).
         try:
-            llm = ChatOpenAI(
+            return ChatOpenAI(
                 model="minimax-m2.5-free",
                 api_key=opencode_key,
                 base_url="https://opencode.ai/zen/v1",
@@ -77,28 +79,11 @@ def get_llm():
                 temperature=0,
                 max_retries=1,
             )
-            # Test connection
-            llm.invoke("test")
-            return llm
         except Exception as e:
-            # Rate limited or error - try Nemotron fallback
             error_msg = str(e).lower()
             if "rate" in error_msg or "429" in error_msg or "limit" in error_msg:
                 logger.info("Minimax rate limited, trying Nemotron fallback...")
-
-            # Try Nemotron 3 Super Free as fallback
-            try:
-                # Use OpenCode with Nemotron model
-                return ChatOpenAI(
-                    model="nvidia/nemotron-3-super-nemotron-3-super-4b",
-                    api_key=opencode_key,
-                    base_url="https://opencode.ai/zen/v1",
-                    default_headers={"x-opencode-provider": "opencode"},
-                    temperature=0,
-                    max_retries=1,
-                )
-            except Exception:
-                pass  # Fall through to try other providers
+            # Fall through to try Nemotron / other providers below.
 
     if openai_key:
         from langchain_openai import ChatOpenAI
@@ -189,13 +174,29 @@ def scraping_node(state: ProcurementState) -> ProcurementState:
     # Try to use PhilGEPS scraper
     try:
         from src.servers.mcp.philgeps_data import get_agency_procurement, search_philgeps
-        import asyncio
 
-        # Search for related procurements
-        if agency:
-            result = asyncio.run(get_agency_procurement(agency_name=agency, limit=5))
+        async def _fetch() -> dict:
+            if agency:
+                return await get_agency_procurement(agency_name=agency, limit=5)
+            return await search_philgeps(keyword=description, category="goods")
+
+        # The LangGraph node may already be executing inside a running loop
+        # (when invoked via `graph.ainvoke`). `asyncio.run` would then raise.
+        # Detect the running loop and fall back to a sync-friendly helper.
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is not None:
+            # Already inside an event loop — dispatch synchronously by running
+            # the coroutine to completion on the current loop via a thread.
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(asyncio.run, _fetch()).result()
         else:
-            result = asyncio.run(search_philgeps(keyword=description, category="goods"))
+            result = asyncio.run(_fetch())
 
         state["scraping_results"] = {
             "results": result.get("results", []),
@@ -231,36 +232,32 @@ def llm_analysis_node(state: ProcurementState) -> ProcurementState:
     description = state.get("contract_description", "")
     amount = state.get("contract_amount", 0)
 
-    # Prompt for LLM to analyze procurement
-    prompt = f"""Analyze this Philippine government procurement for potential red flags:
-
-Contract: {description}
-Amount: PHP {amount:,}
-
-Check for:
-1. RA 12009 compliance (SVP threshold PHP 1,000,000)
-2. Price reasonableness compared to market rates
-3. Common red flags (splitting contracts, favored bidders, etc.)
-4. PhilGEPS posting requirements
-
-Return a JSON analysis with:
-- anomalies_found: list of issues
-- risk_level: low/medium/high
-- recommendations: list of actions
-"""
-
     try:
         from langchain_core.output_parsers import JsonOutputParser
-        from langchain_core.runnables import RunnableLambda
+        from langchain_core.prompts import ChatPromptTemplate
 
         parser = JsonOutputParser()
 
-        # Simple chain: prompt -> llm -> parser
-        def parse_response(request: dict) -> str:
-            return prompt
+        # ChatPromptTemplate substitutes {description} / {amount} from the input dict.
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", "You are a Philippine government procurement analyst. Always reply with strict JSON."),
+            ("human",
+             "Analyze this Philippine government procurement for potential red flags:\n\n"
+             "Contract description: {description}\n"
+             "Amount: PHP {amount}\n\n"
+             "Check for:\n"
+             "1. RA 12009 compliance (SVP threshold PHP 1,000,000)\n"
+             "2. Price reasonableness compared to market rates\n"
+             "3. Common red flags (splitting contracts, favored bidders, etc.)\n"
+             "4. PhilGEPS posting requirements\n\n"
+             "Return a JSON object with keys:\n"
+             "- anomalies_found: list of strings describing issues\n"
+             "- risk_level: one of low | medium | high\n"
+             "- recommendations: list of strings with suggested actions"),
+        ])
 
-        chain = RunnableLambda(parse_response) | llm | parser
-        result = chain.invoke({})
+        chain = prompt_template | llm | parser
+        result = chain.invoke({"description": description, "amount": f"{amount:,}"})
 
         state["llm_analysis"] = {
             "available": True,
@@ -270,11 +267,13 @@ Return a JSON analysis with:
         }
     except Exception as e:
         state["llm_analysis"] = {
-            "available": True,
+            "available": False,
             "error": str(e),
             "fallback": "Rule-based analysis used",
         }
 
+    # If the LLM call succeeded we are still in the LLM stage; on failure we
+    # fall back to the rule-based pipeline's status.
     state["status"] = AnalysisStatus.LEGAL_CHECK
     return state
 
