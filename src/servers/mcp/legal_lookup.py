@@ -12,8 +12,11 @@ from fastmcp import FastMCP
 # Initialize MCP server
 mcp = FastMCP("legal-lookup")
 
-# Load Legal Rule Engine JSON (planning doc lives two levels up: src/servers/mcp/legal_lookup.py -> src/servers/mcp -> src/servers -> src -> repo root)
-LEGAL_RULE_ENGINE_PATH = Path(__file__).parent.parent.parent.parent / "docs" / "legal_rule_engine.json"
+# Load Legal Rule Engine JSON.
+# Path: src/servers/mcp/legal_lookup.py -> src/servers/mcp -> src/servers -> src -> repo root.
+LEGAL_RULE_ENGINE_PATH = (
+    Path(__file__).parent.parent.parent.parent / "docs" / "legal_rule_engine.json"
+)
 
 with open(LEGAL_RULE_ENGINE_PATH) as f:
     _legal_data: dict = json.load(f)

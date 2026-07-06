@@ -137,20 +137,16 @@ def get_stats():
 @app.post("/api/analyze")
 def analyze(request: ProcurementRequest):
     """Analyze a procurement contract."""
-    import asyncio
     from src.orchestration.orchestrator import analyze_procurement
 
     try:
-        result = asyncio.run(
-            analyze_procurement(
-                contract_id=request.contract_id,
-                contract_description=request.contract_description,
-                contract_amount=request.contract_amount,
-                svp_category=request.svp_category,
-                save_to_db=True,
-            )
+        return analyze_procurement(
+            contract_id=request.contract_id,
+            contract_description=request.contract_description,
+            contract_amount=request.contract_amount,
+            svp_category=request.svp_category,
+            save_to_db=True,
         )
-        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

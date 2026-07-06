@@ -14,7 +14,6 @@ PhilGEPS endpoint is unreachable or requires authentication.
 from typing import Any
 
 from src.servers.mcp.philgeps_mock import (
-    MOCK_PROCUREMENTS,
     find_by_agency as _find_by_agency,
     find_by_notice as _find_by_notice,
     search_mock as _search_mock,

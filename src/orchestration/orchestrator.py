@@ -1,337 +1,55 @@
-"""
-LangGraph Orchestrator for RedFlag Agents PH.
-Coordinates multi-agent workflows for procurement anomaly detection.
+"""Public entry point for the ProcuGents orchestrator.
+
+``analyze_procurement`` is the function called by the FastAPI layer and
+the auto-crawl script; everything else in this package is internal.
+
+The previous version of this module exposed every node inline; nodes now
+live under ``src.orchestration.agents.*`` and the graph wiring under
+``src.orchestration.graph``. Backwards-compatible re-exports are kept so
+existing callers (e.g., ``tests/test_orchestrator.py``) keep working.
 """
 
-import asyncio
+from __future__ import annotations
+
 import logging
-import os
-from typing import Any, Literal, TypedDict
+from typing import Any
 
-from langgraph.graph import END, StateGraph
+from src.orchestration.agents.alert import alert_node
+from src.orchestration.agents.bid import bid_analyzer_node
+from src.orchestration.agents.doc import doc_auditor_node
+from src.orchestration.agents.legal import legal_check_node
+from src.orchestration.agents.llm import get_llm, llm_analysis_node
+from src.orchestration.agents.price import price_analysis_node
+from src.orchestration.agents.scraping import scraping_node
+from src.orchestration.graph import create_procurement_graph
+from src.orchestration.state import ProcurementState
+from src.services.database import AnalysisStatus
 
-from src.services.database import AnalysisStatus  # single source of truth
+# Backwards-compat constants for tests / external callers.
+SVP_THRESHOLD = 1_000_000  # Mirrors state.SVP_THRESHOLD_PHP.
 
 logger = logging.getLogger(__name__)
 
 
-class ProcurementState(TypedDict, total=False):
-    """State passed through the LangGraph workflow."""
-    contract_id: str
-    contract_description: str
-    contract_amount: float
-    agency: str
-    svp_category: str
-    legal_findings: dict[str, Any]
-    price_findings: dict[str, Any]
-    scraping_results: dict[str, Any]
-    llm_analysis: dict[str, Any]
-    anomalies: list[dict[str, Any]]
-    alerts_created: list[dict[str, Any]]
-    status: str
-    error: str | None
+# Re-exports for tests and external callers.
+__all__ = [
+    "analyze_procurement",
+    "create_procurement_graph",
+    "legal_check_node",
+    "price_analysis_node",
+    "scraping_node",
+    "llm_analysis_node",
+    "bid_analyzer_node",
+    "doc_auditor_node",
+    "alert_node",
+    "get_llm",
+    "ProcurementState",
+    "AnalysisStatus",
+    "SVP_THRESHOLD",
+]
 
 
-# RA 12009 thresholds
-SVP_THRESHOLD = 1_000_000  # PHP 1M for Small Value Procurement
-
-# LLM Configuration - set via environment variable
-# Get your free API key at https://opencode.ai/settings/api-keys
-OPENCODE_API_KEY = os.environ.get("OPENCODE_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-
-
-def get_cached_market_price(item_name: str) -> float | None:
-    """Read a cached market price when Redis is available."""
-    from src.services.cache import get_cached_market_price as read_cached_market_price
-
-    return read_cached_market_price(item_name)
-
-
-def get_llm():
-    """Get configured LLM with fallback on rate limit."""
-    opencode_key = os.environ.get("OPENCODE_API_KEY")
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-
-    if opencode_key:
-        from langchain_openai import ChatOpenAI
-
-        # Try Minimax first (no eager ping — every live call hits the API
-        # and would burn the user's free quota before the first real request).
-        try:
-            return ChatOpenAI(
-                model="minimax-m2.5-free",
-                api_key=opencode_key,
-                base_url="https://opencode.ai/zen/v1",
-                default_headers={"x-opencode-provider": "opencode"},
-                temperature=0,
-                max_retries=1,
-            )
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "rate" in error_msg or "429" in error_msg or "limit" in error_msg:
-                logger.info("Minimax rate limited, trying Nemotron fallback...")
-            # Fall through to try Nemotron / other providers below.
-
-    if openai_key:
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=openai_key,
-            temperature=0,
-        )
-    if anthropic_key:
-        from langchain_anthropic import ChatAnthropic
-
-        return ChatAnthropic(
-            model_name="claude-3-haiku-20240307",
-            api_key=anthropic_key,
-            temperature=0,
-        )
-    return None
-
-
-def legal_check_node(state: ProcurementState) -> ProcurementState:
-    """Node: Check legal compliance for procurement (RA 12009 thresholds)."""
-    amount = state.get("contract_amount", 0)
-    is_compliant = amount <= SVP_THRESHOLD
-    violations = []
-
-    if amount > SVP_THRESHOLD:
-        violations.append(f"Amount exceeds SVP threshold (PHP {SVP_THRESHOLD:,})")
-        violations.append(f"Requires competitive bidding (amount > PHP {SVP_THRESHOLD:,})")
-
-    state["legal_findings"] = {
-        "threshold_compliant": is_compliant,
-        "required_process": "competitive bidding" if amount > SVP_THRESHOLD else "small value procurement",
-        "threshold": SVP_THRESHOLD,
-        "philgeps_posting_required": amount > 50_000,
-        "violations": violations,
-        "law": "RA 12009 (2024)",
-    }
-    state["status"] = AnalysisStatus.LEGAL_CHECK
-    return state
-
-
-def price_analysis_node(state: ProcurementState) -> ProcurementState:
-    """Node: Analyze pricing for potential inflation."""
-    amount = state.get("contract_amount", 0)
-    description = state.get("contract_description", "").lower()
-
-    baseline = None
-    inflation_threshold = None
-    source = "unavailable"
-
-    try:
-        cached = get_cached_market_price(description)
-        if cached is not None:
-            baseline = cached
-            inflation_threshold = cached * 1.3
-            source = "cached_market_price"
-    except Exception as e:
-        logger.warning("Market price cache unavailable: %s", e)
-
-    if inflation_threshold is None:
-        flag = "unknown"
-        reason = "No market baseline available for comparison"
-    elif amount > inflation_threshold:
-        flag = "potential_inflation"
-        reason = "Price exceeds market baseline by more than 30%"
-    else:
-        flag = "normal"
-        reason = "Price within market baseline allowance"
-
-    state["price_findings"] = {
-        "flag": flag,
-        "reason": reason,
-        "baseline": baseline,
-        "inflation_threshold": inflation_threshold,
-        "amount": amount,
-        "source": source,
-    }
-    state["status"] = AnalysisStatus.PRICE_CHECK
-    return state
-
-
-def scraping_node(state: ProcurementState) -> ProcurementState:
-    """Node: Scrape PhilGEPS for related contracts."""
-    description = state.get("contract_description", "")
-    agency = state.get("agency", "")
-
-    # Try to use PhilGEPS scraper
-    try:
-        from src.servers.mcp.philgeps_data import get_agency_procurement, search_philgeps
-
-        async def _fetch() -> dict:
-            if agency:
-                return await get_agency_procurement(agency_name=agency, limit=5)
-            return await search_philgeps(keyword=description, category="goods")
-
-        # The LangGraph node may already be executing inside a running loop
-        # (when invoked via `graph.ainvoke`). `asyncio.run` would then raise.
-        # Detect the running loop and fall back to a sync-friendly helper.
-        try:
-            running_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            running_loop = None
-
-        if running_loop is not None:
-            # Already inside an event loop — dispatch synchronously by running
-            # the coroutine to completion on the current loop via a thread.
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                result = pool.submit(asyncio.run, _fetch()).result()
-        else:
-            result = asyncio.run(_fetch())
-
-        state["scraping_results"] = {
-            "results": result.get("results", []),
-            "source": result.get("source", "unknown"),
-            "searched": description,
-            "note": f"Found {len(result.get('results', []))} related procurements",
-        }
-    except Exception as e:
-        state["scraping_results"] = {
-            "results": [],
-            "source": "fallback",
-            "searched": description,
-            "note": f"Scraper unavailable: {str(e)[:50]}",
-        }
-
-    state["status"] = AnalysisStatus.SCRAPING
-    return state
-
-
-def llm_analysis_node(state: ProcurementState) -> ProcurementState:
-    """Node: LLM-powered deep analysis for procurement documents."""
-    llm = get_llm()
-
-    if llm is None:
-        # No LLM configured, use rule-based fallback
-        state["llm_analysis"] = {
-            "available": False,
-            "note": "Set OPENCODE_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY for LLM analysis",
-        }
-        state["status"] = AnalysisStatus.LEGAL_CHECK
-        return state
-
-    description = state.get("contract_description", "")
-    amount = state.get("contract_amount", 0)
-
-    try:
-        from langchain_core.output_parsers import JsonOutputParser
-        from langchain_core.prompts import ChatPromptTemplate
-
-        parser = JsonOutputParser()
-
-        # ChatPromptTemplate substitutes {description} / {amount} from the input dict.
-        prompt_template = ChatPromptTemplate.from_messages([
-            ("system", "You are a Philippine government procurement analyst. Always reply with strict JSON."),
-            ("human",
-             "Analyze this Philippine government procurement for potential red flags:\n\n"
-             "Contract description: {description}\n"
-             "Amount: PHP {amount}\n\n"
-             "Check for:\n"
-             "1. RA 12009 compliance (SVP threshold PHP 1,000,000)\n"
-             "2. Price reasonableness compared to market rates\n"
-             "3. Common red flags (splitting contracts, favored bidders, etc.)\n"
-             "4. PhilGEPS posting requirements\n\n"
-             "Return a JSON object with keys:\n"
-             "- anomalies_found: list of strings describing issues\n"
-             "- risk_level: one of low | medium | high\n"
-             "- recommendations: list of strings with suggested actions"),
-        ])
-
-        chain = prompt_template | llm | parser
-        result = chain.invoke({"description": description, "amount": f"{amount:,}"})
-
-        state["llm_analysis"] = {
-            "available": True,
-            "anomalies": result.get("anomalies_found", []),
-            "risk_level": result.get("risk_level", "low"),
-            "recommendations": result.get("recommendations", []),
-        }
-    except Exception as e:
-        state["llm_analysis"] = {
-            "available": False,
-            "error": str(e),
-            "fallback": "Rule-based analysis used",
-        }
-
-    # If the LLM call succeeded we are still in the LLM stage; on failure we
-    # fall back to the rule-based pipeline's status.
-    state["status"] = AnalysisStatus.LEGAL_CHECK
-    return state
-
-
-def alert_node(state: ProcurementState) -> ProcurementState:
-    """Node: Create alerts if anomalies detected."""
-    anomalies = []
-    # Check legal findings
-    legal_f = state.get("legal_findings")
-    if legal_f and not legal_f.get("threshold_compliant", True):
-        for v in legal_f.get("violations", []):
-            anomalies.append({
-                "type": "legal",
-                "severity": "high",
-                "description": v,
-                "law": legal_f.get("law"),
-            })
-
-    # Check price findings
-    price_f = state.get("price_findings")
-    if price_f and price_f.get("flag") == "potential_inflation":
-        anomalies.append({
-            "type": "price",
-            "severity": "medium",
-            "description": price_f.get("reason"),
-        })
-
-    state["anomalies"] = anomalies
-    state["alerts_created"] = [
-        {"title": a["type"], "severity": a["severity"], "description": a["description"]}
-        for a in anomalies
-    ]
-    state["status"] = AnalysisStatus.ALERTING if anomalies else AnalysisStatus.COMPLETED
-    return state
-
-
-def should_continue(state: ProcurementState) -> Literal["price_analysis", "alert"]:
-    """Conditional routing: continue to price analysis or skip to alert on legal failure."""
-    if state.get("legal_findings", {}).get("threshold_compliant", True):
-        return "price_analysis"
-    return "alert"
-
-
-def create_procurement_graph() -> StateGraph:
-    """Create the LangGraph state machine for procurement analysis."""
-    graph = StateGraph(ProcurementState)
-
-    graph.add_node("legal_check", legal_check_node)
-    graph.add_node("price_analysis", price_analysis_node)
-    graph.add_node("scraping", scraping_node)
-    graph.add_node("llm_analysis", llm_analysis_node)
-    graph.add_node("alert", alert_node)
-
-    graph.add_edge("__start__", "legal_check")
-    graph.add_conditional_edges(
-        "legal_check",
-        should_continue,
-        {"price_analysis": "price_analysis", "alert": "alert"},
-    )
-    graph.add_edge("price_analysis", "scraping")
-    graph.add_edge("scraping", "llm_analysis")
-    graph.add_edge("llm_analysis", "alert")
-    graph.add_edge("alert", END)
-
-    return graph.compile()
-
-
-async def analyze_procurement(
+def analyze_procurement(
     contract_id: str,
     contract_description: str,
     contract_amount: float,
@@ -339,40 +57,73 @@ async def analyze_procurement(
     source: str = "",
     svp_category: str = "general",
     save_to_db: bool = False,
+    procurement_type: str = "public_bidding",
+    bidders: list[dict[str, Any]] | None = None,
+    hope_approval_proof: bool = False,
 ) -> dict[str, Any]:
-    """
-    Main entry point: analyze a procurement for anomalies.
-    """
+    """Analyze a procurement for anomalies."""
     initial_state: ProcurementState = {
         "contract_id": contract_id,
         "contract_description": contract_description,
-        "contract_amount": contract_amount,
+        "contract_amount": float(contract_amount),
         "agency": agency,
+        "source": source,
         "svp_category": svp_category,
+        "procurement_type": procurement_type,
+        "bidders": list(bidders or []),
+        "hope_approval_proof": hope_approval_proof,
         "legal_findings": {},
         "price_findings": {},
         "scraping_results": {},
+        "bid_flags": [],
+        "bid_citations": [],
+        "bid_risk_score": 1,
+        "doc_flags": [],
+        "doc_citations": [],
+        "doc_risk_score": 1,
         "anomalies": [],
         "alerts_created": [],
+        "final_risk_score": 1,
+        "all_flags": [],
+        "all_citations": [],
+        "alert_triggered": False,
+        "alert_report": None,
         "status": AnalysisStatus.PENDING,
         "error": None,
     }
 
     try:
         graph = create_procurement_graph()
-        result = await graph.ainvoke(initial_state)
+        # LangGraph invoke is sync (compatible with FastAPI thread workers).
+        result = graph.invoke(initial_state)
 
-        output = {
+        final_status = AnalysisStatus.ALERTING if result.get("alert_triggered") else (
+            AnalysisStatus.ERROR if result.get("error") else AnalysisStatus.COMPLETED
+        )
+
+        output: dict[str, Any] = {
             "contract_id": result.get("contract_id"),
             "contract_description": result.get("contract_description"),
             "contract_amount": result.get("contract_amount"),
-            "status": result.get("status"),
+            "agency": result.get("agency"),
+            "status": final_status,
             "legal_findings": result.get("legal_findings"),
             "price_findings": result.get("price_findings"),
             "scraping_results": result.get("scraping_results"),
             "llm_analysis": result.get("llm_analysis"),
+            "bid_findings": result.get("bid_findings"),
+            "bid_flags": result.get("bid_flags"),
+            "bid_risk_score": result.get("bid_risk_score"),
+            "doc_findings": result.get("doc_findings"),
+            "doc_flags": result.get("doc_flags"),
+            "doc_risk_score": result.get("doc_risk_score"),
+            "final_risk_score": result.get("final_risk_score"),
+            "all_flags": result.get("all_flags"),
+            "all_citations": result.get("all_citations", []),
             "anomalies": result.get("anomalies", []),
             "alerts": result.get("alerts_created", []),
+            "alert_triggered": result.get("alert_triggered"),
+            "alert_report": result.get("alert_report"),
         }
 
         if save_to_db:
@@ -380,46 +131,44 @@ async def analyze_procurement(
                 from src.services.database import ProcurementAnalysis, get_db, init_db
                 init_db()
                 with get_db() as db:
-                    analysis = ProcurementAnalysis(
+                    db.add(ProcurementAnalysis(
                         contract_id=contract_id,
                         contract_description=contract_description,
                         contract_amount=contract_amount,
                         agency=agency,
                         source=source,
                         svp_category=svp_category,
-                        status=result.get("status"),
+                        status=final_status,
                         legal_findings=result.get("legal_findings"),
                         price_findings=result.get("price_findings"),
                         scraping_results=result.get("scraping_results"),
                         llm_analysis=result.get("llm_analysis"),
                         anomalies=result.get("anomalies", []),
                         alerts_created=result.get("alerts_created", []),
-                    )
-                    db.add(analysis)
+                    ))
                 output["saved"] = True
-            except Exception as e:
-                logger.warning(f"Failed to save to DB: {e}")
+            except Exception as exc:
+                logger.warning("Failed to save to DB: %s", exc)
                 output["saved"] = False
 
         return output
-
-    except Exception as e:
-        logger.error(f"Analysis failed: {e}")
+    except Exception as exc:
+        logger.error("Analysis failed: %s", exc)
         return {
             "contract_id": contract_id,
-            "status": "error",
-            "error": str(e),
+            "status": AnalysisStatus.ERROR,
+            "error": str(exc),
         }
 
 
 if __name__ == "__main__":
-    import asyncio
+    import json
+    import sys
 
-    result = asyncio.run(
-        analyze_procurement(
-            contract_id="PO-2024-001234",
-            contract_description="Office Chairs",
-            contract_amount=500_000,
-        )
+    sample = analyze_procurement(
+        contract_id="PO-2024-001234",
+        contract_description="Office Chairs",
+        contract_amount=500_000,
     )
-    print(f"Analysis complete: {result.get('status')}")
+    sys.stdout.write(json.dumps(sample, indent=2, default=str))
+    sys.stdout.write("\n")
