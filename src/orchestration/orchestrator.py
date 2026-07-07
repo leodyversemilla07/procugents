@@ -143,8 +143,19 @@ def analyze_procurement(
                         price_findings=result.get("price_findings"),
                         scraping_results=result.get("scraping_results"),
                         llm_analysis=result.get("llm_analysis"),
-                        anomalies=result.get("anomalies", []),
+                        bid_findings=result.get("bid_findings"),
+                        bid_flags=result.get("bid_flags"),
+                        bid_risk_score=result.get("bid_risk_score"),
+                        doc_findings=result.get("doc_findings"),
+                        doc_flags=result.get("doc_flags"),
+                        doc_risk_score=result.get("doc_risk_score"),
+                        final_risk_score=result.get("final_risk_score"),
+                        all_flags=result.get("all_flags"),
+                        all_citations=result.get("all_citations", []),
                         alerts_created=result.get("alerts_created", []),
+                        alert_triggered=1 if result.get("alert_triggered") else 0,
+                        alert_report=result.get("alert_report"),
+                        anomalies=result.get("anomalies", []),
                     ))
                 output["saved"] = True
             except Exception as exc:

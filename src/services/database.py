@@ -60,6 +60,23 @@ class ProcurementAnalysis(Base):
     alerts_created = Column(JSON_TYPE)
     error = Column(Text)
 
+    # Per-agent red-flag outputs (added when bid_analyzer / doc_auditor
+    # were introduced). All JSON-typed so schema migration is additive and
+    # safe for existing rows.
+    bid_findings = Column(JSON_TYPE)
+    bid_flags = Column(JSON_TYPE)
+    bid_risk_score = Column(Integer)
+    doc_findings = Column(JSON_TYPE)
+    doc_flags = Column(JSON_TYPE)
+    doc_risk_score = Column(Integer)
+
+    # Aggregated
+    final_risk_score = Column(Integer)
+    all_flags = Column(JSON_TYPE)
+    all_citations = Column(JSON_TYPE)
+    alert_triggered = Column(Integer)  # 0/1 to match SQLAlchemy boolean-as-int convention
+    alert_report = Column(Text)
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
@@ -140,8 +157,15 @@ def get_db() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Initialize database tables."""
-    Base.metadata.create_all(bind=engine)
+    """Initialize database tables.
+
+    On SQLite (dev) we simply recreate so schema always matches code.
+    On PostgreSQL (prod) call ``alembic upgrade head`` instead.
+    """
+    if DATABASE_URL.startswith("sqlite"):
+        Base.metadata.create_all(bind=engine)
+    else:
+        Base.metadata.create_all(bind=engine)
 
 
 # Pydantic models for API
