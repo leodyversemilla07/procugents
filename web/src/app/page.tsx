@@ -27,6 +27,8 @@ interface AnalysisListItem {
   source: string
   status: string
   anomalies_count: number
+  final_risk_score: number
+  alert_triggered: boolean
   created_at: string
 }
 
@@ -219,6 +221,7 @@ export default function Dashboard() {
                     <TableHead>Source</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead>Amount</TableHead>
+                    <TableHead>Risk</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Anomalies</TableHead>
                     <TableHead></TableHead>
@@ -242,15 +245,22 @@ export default function Dashboard() {
                       <TableCell>{a.contract_description}</TableCell>
                       <TableCell>PHP {a.contract_amount?.toLocaleString()}</TableCell>
                       <TableCell>
-                        <Badge variant={a.anomalies_count > 0 ? "destructive" : "secondary"}>
-                          {a.status}
+                        <Badge variant={a.final_risk_score >= 4 ? "destructive" : a.final_risk_score >= 3 ? "secondary" : "outline"} className="font-mono">
+                          {a.final_risk_score ?? 1}/5
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {a.anomalies_count > 0 ? (
-                          <Badge variant="destructive">{a.anomalies_count}</Badge>
+                        {a.alert_triggered ? (
+                          <Badge variant="destructive">Alert</Badge>
                         ) : (
                           <Badge variant="outline" className="text-green-500">Clean</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {a.anomalies_count > 0 ? (
+                          <Badge variant="secondary">{a.anomalies_count}</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
                       <TableCell>

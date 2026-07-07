@@ -1,4 +1,4 @@
-# Docker Compose for RedFlag Agents PH
+# Docker Compose for ProcuGents
 version: "3.8"
 
 services:
@@ -36,6 +36,8 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
       - POSTGRES_USER=postgres
@@ -51,8 +53,8 @@ services:
         condition: service_healthy
 
   # Next.js Dashboard
-  dashboard:
-    build: ./dashboard
+  web:
+    build: ./web
     ports:
       - "3000:3000"
     environment:
