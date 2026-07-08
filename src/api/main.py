@@ -152,14 +152,53 @@ def analyze(request: ProcurementRequest):
 
 
 @app.get("/api/analyses")
-def get_analyses(limit: int = 50):
-    """Get all analyses from database."""
+def get_analyses(
+    limit: int = 50,
+    min_risk: int | None = None,
+    max_risk: int | None = None,
+    alerted_only: bool = False,
+    agency: str | None = None,
+    q: str | None = None,
+):
+    """Get analyses from database with optional filters.
+
+    Query params:
+        limit:        max number of rows (default 50)
+        min_risk:     only rows with final_risk_score >= min_risk (1..5)
+        max_risk:     only rows with final_risk_score <= max_risk (1..5)
+        alerted_only: only rows with alert_triggered = True
+        agency:       case-insensitive substring match on agency name
+        q:            case-insensitive substring match on contract_id OR
+                      contract_description
+    """
     from src.services.database import get_db, init_db, ProcurementAnalysis
 
     init_db()
     try:
         with get_db() as db:
-            analyses = db.query(ProcurementAnalysis).order_by(
+            query = db.query(ProcurementAnalysis)
+            if min_risk is not None:
+                query = query.filter(
+                    ProcurementAnalysis.final_risk_score >= min_risk
+                )
+            if max_risk is not None:
+                query = query.filter(
+                    ProcurementAnalysis.final_risk_score <= max_risk
+                )
+            if alerted_only:
+                query = query.filter(ProcurementAnalysis.alert_triggered == 1)
+            if agency:
+                query = query.filter(
+                    ProcurementAnalysis.agency.ilike(f"%{agency}%")
+                )
+            if q:
+                like = f"%{q}%"
+                query = query.filter(
+                    (ProcurementAnalysis.contract_id.ilike(like))
+                    | (ProcurementAnalysis.contract_description.ilike(like))
+                )
+
+            analyses = query.order_by(
                 ProcurementAnalysis.created_at.desc()
             ).limit(limit).all()
 

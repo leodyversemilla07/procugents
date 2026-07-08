@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
 from src.orchestration.agents.bid import bid_analyzer_node
 from src.orchestration.agents.doc import doc_auditor_node
@@ -239,3 +240,105 @@ class TestIntegration:
     def test_graph_creation(self):
         graph = create_procurement_graph()
         assert graph is not None
+
+
+# ------------------------- API filter tests ------------------------------------
+
+
+class TestApiFilters:
+    """Verify ``/api/analyses`` filter params work end-to-end."""
+
+    def _setup_two_rows(self, tmp_db_session):
+        from src.services.database import ProcurementAnalysis
+
+        tmp_db_session.add_all([
+            ProcurementAnalysis(
+                contract_id="HIGH-RISK-001",
+                contract_description="Construction",
+                contract_amount=5_000_000,
+                agency="Department of Public Works",
+                final_risk_score=5,
+                alert_triggered=1,
+            ),
+            ProcurementAnalysis(
+                contract_id="LOW-RISK-002",
+                contract_description="Office Supplies",
+                contract_amount=500_000,
+                agency="Civil Service Commission",
+                final_risk_score=1,
+                alert_triggered=0,
+            ),
+        ])
+        tmp_db_session.commit()
+
+    def test_min_risk_filter(self, monkeypatch):
+        """Only rows with risk >= the threshold are returned."""
+        from src.services.database import get_db, init_db
+
+        monkeypatch.setenv("POSTGRES_PASSWORD", "")  # force SQLite
+        init_db()
+
+        with get_db() as db:
+            self._setup_two_rows(db)
+
+        client = TestClient(__import__("src.api.main", fromlist=["app"]).app)
+        resp = client.get("/api/analyses?min_risk=4&limit=10")
+        ids = [r["contract_id"] for r in resp.json()]
+        assert "HIGH-RISK-001" in ids
+        assert "LOW-RISK-002" not in ids
+
+    def test_alerted_only_filter(self, monkeypatch):
+        """``alerted_only=true`` excludes rows without alerts."""
+        from src.services.database import get_db, init_db
+
+        monkeypatch.setenv("POSTGRES_PASSWORD", "")
+        init_db()
+
+        with get_db() as db:
+            self._setup_two_rows(db)
+
+        client = TestClient(__import__("src.api.main", fromlist=["app"]).app)
+        resp = client.get("/api/analyses?alerted_only=true&limit=10")
+        ids = [r["contract_id"] for r in resp.json()]
+        assert "HIGH-RISK-001" in ids
+        assert "LOW-RISK-002" not in ids
+
+    def test_q_substring_filter(self, monkeypatch):
+        """``q=...`` matches against contract_id or description."""
+        from src.services.database import get_db, init_db
+
+        monkeypatch.setenv("POSTGRES_PASSWORD", "")
+        init_db()
+
+        with get_db() as db:
+            self._setup_two_rows(db)
+
+        client = TestClient(__import__("src.api.main", fromlist=["app"]).app)
+
+        # match via description substring
+        desc_match = client.get("/api/analyses?q=supplies&limit=10")
+        ids = [r["contract_id"] for r in desc_match.json()]
+        assert "LOW-RISK-002" in ids
+        assert "HIGH-RISK-001" not in ids
+
+        # match via contract_id substring
+        id_match = client.get("/api/analyses?q=HIGH&limit=10")
+        ids = [r["contract_id"] for r in id_match.json()]
+        assert "HIGH-RISK-001" in ids
+        assert "LOW-RISK-002" not in ids
+
+    def test_agency_filter(self, monkeypatch):
+        """``agency=...`` does a case-insensitive substring match."""
+        from src.services.database import get_db, init_db
+
+        monkeypatch.setenv("POSTGRES_PASSWORD", "")
+        init_db()
+
+        with get_db() as db:
+            self._setup_two_rows(db)
+
+        client = TestClient(__import__("src.api.main", fromlist=["app"]).app)
+        resp = client.get("/api/analyses?agency=civil&limit=10")
+        ids = [r["contract_id"] for r in resp.json()]
+        assert "LOW-RISK-002" in ids
+        assert "HIGH-RISK-001" not in ids

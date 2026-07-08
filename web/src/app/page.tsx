@@ -7,9 +7,10 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty"
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination"
+import { Input } from "@/components/ui/input"
 import Image from "next/image"
 import Link from "next/link"
-import { Bot, FileText, ArrowRight } from "lucide-react"
+import { Bot, FileText, ArrowRight, Search, X, Filter } from "lucide-react"
 
 interface Stats {
   total_analyzed: number
@@ -32,6 +33,20 @@ interface AnalysisListItem {
   created_at: string
 }
 
+interface Filters {
+  q: string
+  agency: string
+  min_risk: number | null
+  alerted_only: boolean
+}
+
+const EMPTY_FILTERS: Filters = {
+  q: "",
+  agency: "",
+  min_risk: null,
+  alerted_only: false,
+}
+
 const ITEMS_PER_PAGE = 10
 
 async function fetchStatsData(): Promise<Stats> {
@@ -39,8 +54,15 @@ async function fetchStatsData(): Promise<Stats> {
   return res.json()
 }
 
-async function fetchAnalysesData(): Promise<AnalysisListItem[]> {
-  const res = await fetch("/api/analyses")
+async function fetchAnalysesData(filters: Filters): Promise<AnalysisListItem[]> {
+  const params = new URLSearchParams()
+  if (filters.q.trim()) params.set("q", filters.q.trim())
+  if (filters.agency.trim()) params.set("agency", filters.agency.trim())
+  if (filters.min_risk !== null) params.set("min_risk", String(filters.min_risk))
+  if (filters.alerted_only) params.set("alerted_only", "true")
+  params.set("limit", "500")
+  const qs = params.toString()
+  const res = await fetch(`/api/analyses?${qs}`)
   return res.json()
 }
 
@@ -55,17 +77,18 @@ export default function Dashboard() {
     compliance_rate: 0,
   })
   const [page, setPage] = useState(1)
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
+  const [searchInput, setSearchInput] = useState("")
+  const [agencyInput, setAgencyInput] = useState("")
 
   useEffect(() => {
     let cancelled = false
-
     async function loadDashboard() {
       try {
         const [statsData, analysesData] = await Promise.all([
           fetchStatsData(),
-          fetchAnalysesData(),
+          fetchAnalysesData(filters),
         ])
-
         if (!cancelled) {
           setStats(statsData)
           setAnalyses(analysesData)
@@ -74,33 +97,30 @@ export default function Dashboard() {
         console.error(error)
       }
     }
-
     void loadDashboard()
-
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [filters])
 
   const triggerCrawl = async () => {
     setCrawling(true)
     setCrawlStatus("Scanning PhilGEPS for anomalies...")
     try {
       const res = await fetch("/api/crawl", { method: "POST" })
-      if (!res.ok) {
-        throw new Error(`Crawl failed: ${res.status}`)
-      }
-
+      if (!res.ok) throw new Error(`Crawl failed: ${res.status}`)
       const data = await res.json()
-      setCrawlStatus(`Analyzed ${data.total_analyzed} contracts — found ${data.total_anomalies} anomalies`)
-
+      setCrawlStatus(
+        `Analyzed ${data.total_analyzed} contracts — found ${data.total_anomalies} anomalies`
+      )
       try {
         const [statsData, analysesData] = await Promise.all([
           fetchStatsData(),
-          fetchAnalysesData(),
+          fetchAnalysesData(filters),
         ])
         setStats(statsData)
         setAnalyses(analysesData)
+        setPage(1)
       } catch (error) {
         console.error("Failed to refresh dashboard after crawl", error)
       }
@@ -109,6 +129,42 @@ export default function Dashboard() {
     }
     setCrawling(false)
   }
+
+  const applyFilters = () => {
+    setFilters({
+      q: searchInput,
+      agency: agencyInput,
+      min_risk: filters.min_risk,
+      alerted_only: filters.alerted_only,
+    })
+    setPage(1)
+  }
+
+  const clearFilters = () => {
+    setSearchInput("")
+    setAgencyInput("")
+    setFilters(EMPTY_FILTERS)
+    setPage(1)
+  }
+
+  const toggleAlertedOnly = () => {
+    setFilters((prev) => ({ ...prev, alerted_only: !prev.alerted_only }))
+    setPage(1)
+  }
+
+  const toggleRiskFilter = (threshold: number | null) => {
+    setFilters((prev) => ({
+      ...prev,
+      min_risk: prev.min_risk === threshold ? null : threshold,
+    }))
+    setPage(1)
+  }
+
+  const hasActiveFilters =
+    filters.q !== "" ||
+    filters.agency !== "" ||
+    filters.min_risk !== null ||
+    filters.alerted_only
 
   // Pagination
   const totalPages = Math.ceil(analyses.length / ITEMS_PER_PAGE)
@@ -200,16 +256,117 @@ export default function Dashboard() {
       {/* History Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Contract History</CardTitle>
+          <CardTitle className="flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <Filter className="h-4 w-4" />
+              Contract History
+            </span>
+            {hasActiveFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearFilters}
+                className="text-xs"
+              >
+                <X className="h-3 w-3 mr-1" /> Clear filters
+              </Button>
+            )}
+          </CardTitle>
           <CardDescription>
-            {analyses.length} contracts analyzed - click to view details
+            {hasActiveFilters
+              ? `${analyses.length} matching contracts (filtered)`
+              : `${analyses.length} contracts analyzed — click to view details`}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {/* Filter bar */}
+          <div className="flex flex-wrap items-end gap-3 p-3 bg-muted/30 rounded-lg">
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-xs text-muted-foreground mb-1 block">
+                Search ID / description
+              </label>
+              <div className="relative">
+                <Search className="h-3 w-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="e.g. NBCC-2024 or 'chairs'"
+                  value={searchInput}
+                  onChange={(e) => {
+                    setSearchInput(e.target.value)
+                    if (e.target.value === "") {
+                      setFilters((prev) => ({ ...prev, q: "" }))
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") applyFilters()
+                  }}
+                  className="pl-7 h-8 text-sm"
+                />
+              </div>
+            </div>
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-xs text-muted-foreground mb-1 block">
+                Agency
+              </label>
+              <Input
+                placeholder="e.g. DepEd, DOH"
+                value={agencyInput}
+                onChange={(e) => {
+                  setAgencyInput(e.target.value)
+                  if (e.target.value === "") {
+                    setFilters((prev) => ({ ...prev, agency: "" }))
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyFilters()
+                }}
+                className="h-8 text-sm"
+              />
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={applyFilters}
+              className="h-8"
+            >
+              Apply
+            </Button>
+            <div className="flex flex-wrap gap-1 items-center">
+              <span className="text-xs text-muted-foreground mr-1">Risk:</span>
+              {([null, 1, 2, 3, 4] as const).map((threshold) => {
+                const active = filters.min_risk === threshold
+                const label =
+                  threshold === null ? "Any" : `${threshold}+`
+                return (
+                  <Badge
+                    key={String(threshold)}
+                    variant={active ? "default" : "outline"}
+                    className="cursor-pointer"
+                    onClick={() => toggleRiskFilter(threshold)}
+                  >
+                    {label}
+                  </Badge>
+                )
+              })}
+              <Badge
+                variant={filters.alerted_only ? "destructive" : "outline"}
+                className="cursor-pointer"
+                onClick={toggleAlertedOnly}
+              >
+                Alerts only
+              </Badge>
+            </div>
+          </div>
+
           {analyses.length === 0 ? (
             <Empty className="min-h-[300px]">
-              <EmptyTitle>No contracts analyzed yet</EmptyTitle>
-              <EmptyDescription>Start auto-detection to find anomalies.</EmptyDescription>
+              <EmptyTitle>
+                {hasActiveFilters ? "No contracts match your filters" : "No contracts analyzed yet"}
+              </EmptyTitle>
+              <EmptyDescription>
+                {hasActiveFilters
+                  ? "Try clearing or loosening your filters above."
+                  : "Start auto-detection to analyze PhilGEPS procurements."}
+              </EmptyDescription>
             </Empty>
           ) : (
             <>
