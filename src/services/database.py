@@ -1,119 +1,59 @@
+"""Engine + session factory + ``init_db`` semantics.
+
+Defines:
+    * ``engine``     : SQLAlchemy engine built from the DATABASE_URL env.
+    * ``SessionLocal``: sessionmaker bound to that engine.
+    * ``get_db``     : context-managed session.
+    * ``init_db``    : SQLite convenience helper. For PostgreSQL, run
+                       ``alembic upgrade head`` instead.
+
+The SQLAlchemy models live in :mod:`src.services.db_models` so that
+alembic's ``env.py`` can import them without triggering this module's
+runtime side-effects.
 """
-Database models and connection for ProcuGents.
-Supports both PostgreSQL (production) and SQLite (development).
-"""
+
+from __future__ import annotations
 
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
-from enum import StrEnum
-from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, Enum, Float, Integer, String, Text, create_engine
-# Use JSON for SQLite, JSONB for PostgreSQL
-if os.environ.get("POSTGRES_PASSWORD"):
-    from sqlalchemy.dialects.postgresql import JSONB as JSON_TYPE
-else:
-    from sqlalchemy import JSON as JSON_TYPE
-from sqlalchemy.orm import declarative_base, Session, sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from src.services.db_models import (
+    Base,
+    Agency,
+    Alert,
+    AnalysisStatus,
+    ProcurementAnalysis,
+    utc_now,
+)
 
 
-class AnalysisStatus(StrEnum):
-    PENDING = "pending"
-    LEGAL_CHECK = "legal_check"
-    PRICE_CHECK = "price_check"
-    SCRAPING = "scraping"
-    ALERTING = "alerting"
-    COMPLETED = "completed"
-    ERROR = "error"
+__all__ = [
+    "Base",
+    "Alert",
+    "Agency",
+    "AnalysisStatus",
+    "ProcurementAnalysis",
+    "utc_now",
+    "engine",
+    "SessionLocal",
+    "DATABASE_URL",
+    "get_db",
+    "init_db",
+]
 
 
-Base = declarative_base()
+# ---------------------------------------------------------------------------
+# Engine + Session
+# ---------------------------------------------------------------------------
 
 
-def utc_now() -> datetime:
-    """Return a timezone-aware UTC timestamp."""
-    return datetime.now(UTC)
-
-
-class ProcurementAnalysis(Base):
-    """Table for storing procurement analysis results."""
-    __tablename__ = "procurement_analysis"
-
-    id = Column(Integer, primary_key=True)
-    contract_id = Column(String(100), nullable=False, index=True)
-    contract_description = Column(Text, nullable=False)
-    contract_amount = Column(Float, nullable=False)
-    agency = Column(String(200))
-    source = Column(String(50))
-    svp_category = Column(String(50))
-
-    # Results
-    status = Column(Enum(AnalysisStatus), default=AnalysisStatus.PENDING)
-    legal_findings = Column(JSON_TYPE)
-    price_findings = Column(JSON_TYPE)
-    scraping_results = Column(JSON_TYPE)
-    llm_analysis = Column(JSON_TYPE)
-    anomalies = Column(JSON_TYPE)
-    alerts_created = Column(JSON_TYPE)
-    error = Column(Text)
-
-    # Per-agent red-flag outputs (added when bid_analyzer / doc_auditor
-    # were introduced). All JSON-typed so schema migration is additive and
-    # safe for existing rows.
-    bid_findings = Column(JSON_TYPE)
-    bid_flags = Column(JSON_TYPE)
-    bid_risk_score = Column(Integer)
-    doc_findings = Column(JSON_TYPE)
-    doc_flags = Column(JSON_TYPE)
-    doc_risk_score = Column(Integer)
-
-    # Aggregated
-    final_risk_score = Column(Integer)
-    all_flags = Column(JSON_TYPE)
-    all_citations = Column(JSON_TYPE)
-    alert_triggered = Column(Integer)  # 0/1 to match SQLAlchemy boolean-as-int convention
-    alert_report = Column(Text)
-
-    # Timestamps
-    created_at = Column(DateTime, default=utc_now)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
-
-
-class Alert(Base):
-    """Table for storing alerts."""
-    __tablename__ = "alerts"
-
-    id = Column(Integer, primary_key=True)
-    title = Column(String(200), nullable=False)
-    description = Column(Text)
-    level = Column(String(20), default="medium")
-    severity = Column(String(20), default="medium")
-    contract_id = Column(String(100), index=True)
-    status = Column(String(20), default="pending")
-    resolution_notes = Column(Text)
-    created_at = Column(DateTime, default=utc_now)
-    resolved_at = Column(DateTime, nullable=True)
-
-
-class Agency(Base):
-    """Table for government agencies."""
-    __tablename__ = "agencies"
-
-    id = Column(Integer, primary_key=True)
-    name = Column(String(200), nullable=False, unique=True, index=True)
-    acronym = Column(String(20))
-    uacs_code = Column(String(50))
-    region = Column(String(50))
-    category = Column(String(50))
-    created_at = Column(DateTime, default=utc_now)
-
-
-# Database URL - supports both PostgreSQL and SQLite
 def _get_database_url() -> str:
-    """Get database URL from environment or use SQLite default."""
+    """Compose the database URL from ``POSTGRES_*`` env vars; fall back to SQLite."""
     pg_host = os.environ.get("POSTGRES_HOST", "localhost")
     pg_port = os.environ.get("POSTGRES_PORT", "5432")
     pg_user = os.environ.get("POSTGRES_USER", "postgres")
@@ -122,29 +62,26 @@ def _get_database_url() -> str:
 
     if pg_pass:
         return f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
-
-    # Use SQLite for development
     return "sqlite:///procugents.db"
 
 
 DATABASE_URL = _get_database_url()
+SUPPORTS_MIGRATIONS = not DATABASE_URL.startswith("sqlite:")
 
-# Engine with appropriate settings
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        DATABASE_URL,
-        echo=False,
-        connect_args={"check_same_thread": False}
-    )
-else:
-    engine = create_engine(DATABASE_URL, echo=False)
 
-SessionLocal = sessionmaker(bind=engine)
+def _build_engine(url: str):
+    if url.startswith("sqlite:"):
+        return create_engine(url, echo=False, connect_args={"check_same_thread": False})
+    return create_engine(url, echo=False, pool_pre_ping=True)
+
+
+engine = _build_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine, autoflush=False)
 
 
 @contextmanager
 def get_db() -> Iterator[Session]:
-    """Get database session with automatic cleanup."""
+    """Yield a SQLAlchemy session, committing on success and rolling back on error."""
     db = SessionLocal()
     try:
         yield db
@@ -156,19 +93,75 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# init_db: SQLite-only convenience. Production callers must run migrations.
+# ---------------------------------------------------------------------------
+
+
+def _using_sqlite() -> bool:
+    return DATABASE_URL.startswith("sqlite:")
+
+
 def init_db() -> None:
-    """Initialize database tables.
+    """Initialise the database.
 
-    On SQLite (dev) we simply recreate so schema always matches code.
-    On PostgreSQL (prod) call ``alembic upgrade head`` instead.
+    SQLite (development):
+        For convenience this creates any tables that are missing using
+        ``Base.metadata.create_all``. NEVER call this on production data:
+        SQLite has no concept of migrations and any schema change after a
+        row of data exists silently breaks.  Use ``init_db`` only in unit
+        tests / local development.
+
+    PostgreSQL (production):
+        Raises ``RuntimeError`` unless the alembic version table is present,
+        so operators cannot accidentally bypass migrations. Use:
+
+            alembic upgrade head
+
+        We do not call ``create_all`` because that does not record the
+        schema in the version table, and any later ``alembic upgrade`` will
+        try to ``drop`` columns alembic has no record of.
     """
-    if DATABASE_URL.startswith("sqlite"):
+    if _using_sqlite():
         Base.metadata.create_all(bind=engine)
-    else:
-        Base.metadata.create_all(bind=engine)
+        return
+
+    # Production-mode. Confirm the schema is under migration control, otherwise
+    # block startup rather than silently creating tables that alembic doesn't
+    # know about.
+    from sqlalchemy import inspect
+    from sqlalchemy.exc import DBAPIError
+
+    insp = inspect(engine)
+    try:
+        tables = set(insp.get_table_names())
+    except DBAPIError as exc:  # pragma: no cover - DB config issue
+        raise RuntimeError(
+            f"Could not connect to PostgreSQL at {DATABASE_URL!r}: {exc}"
+        )
+
+    if "alembic_version" not in tables:
+        raise RuntimeError(
+            "PostgreSQL database is not under migration control. Run "
+            "'alembic upgrade head' before starting ProCuGents. "
+            "See docs/migrations.md for details."
+        )
+
+    # Defensive: if for some reason the user meta-table is missing, raise.
+    required = {"procurement_analysis", "alerts", "agencies"}
+    missing = required - tables
+    if missing:
+        raise RuntimeError(
+            f"Required tables missing from PostgreSQL: {sorted(missing)}. "
+            "Run 'alembic upgrade head' to apply pending migrations."
+        )
 
 
-# Pydantic models for API
+# ---------------------------------------------------------------------------
+# Pydantic API models (unchanged API surface)
+# ---------------------------------------------------------------------------
+
+
 class ProcurementCreate(BaseModel):
     contract_id: str
     contract_description: str
@@ -186,19 +179,11 @@ class AnalysisResponse(BaseModel):
     agency: str = ""
     source: str = ""
     status: str
-    legal_findings: dict[str, Any] | None = None
-    price_findings: dict[str, Any] | None = None
-    scraping_results: dict[str, Any] | None = None
-    llm_analysis: dict[str, Any] | None = None
-    anomalies: list[dict[str, Any]] = []
-    alerts_created: list[dict[str, Any]] = []
+    legal_findings: dict | None = None
+    price_findings: dict | None = None
+    scraping_results: dict | None = None
+    llm_analysis: dict | None = None
+    anomalies: list[dict] = []
+    alerts_created: list[dict] = []
     error: str | None = None
-    created_at: datetime
-
-
-class AlertCreate(BaseModel):
-    title: str
-    description: str = ""
-    level: str = "medium"
-    severity: str = "medium"
-    contract_id: str = ""
+    created_at: datetime  # type: ignore[name-defined]  # noqa: F821
