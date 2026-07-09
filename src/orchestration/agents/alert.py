@@ -11,6 +11,7 @@ Aggregates findings from every prior agent in the graph and:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -153,6 +154,40 @@ def alert_node(state: ProcurementState) -> ProcurementState:
     ]
     state["alert_triggered"] = alert_triggered
     state["alert_report"] = alert_report
+
+    # Publish high-risk alerts to the dashboard broadcast channel so the
+    # WebSocket layer can stream them to subscribed browser tabs.
+    if alert_triggered:
+        try:
+            from src.services.events import CHANNEL_DASHBOARD_UPDATES, bus
+
+            event_payload = {
+                "kind": "alert_triggered",
+                "contract_id": state.get("contract_id"),
+                "description": state.get("contract_description"),
+                "amount": state.get("contract_amount"),
+                "agency": state.get("agency"),
+                "final_risk_score": final_risk_score,
+                "anomalies": [
+                    f.get("description") for f in all_flags
+                ],
+                "citations": sorted(all_citations),
+            }
+
+            coro = bus.publish(CHANNEL_DASHBOARD_UPDATES, event_payload)
+            try:
+                # FastAPI handler/test fixture: we ARE inside a running loop.
+                loop = asyncio.get_running_loop()
+                # Schedule without blocking -- the coroutine runs in the
+                # background. create_task works because we're in the same
+                # thread as the loop.
+                loop.create_task(coro)
+            except RuntimeError:
+                # No running loop (sync script). Bridge to a temp loop
+                # so the publish happens synchronously.
+                asyncio.run(coro)
+        except Exception as exc:  # pragma: no cover - never break analysis
+            logger.warning("failed to publish dashboard update: %s", exc)
 
     try:
         from src.services.cache import cache_alert

@@ -4,7 +4,7 @@ FastAPI Server for RedFlag Agents PH Dashboard
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -328,6 +328,40 @@ def crawl_agency(agency: str | None = None):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== WebSocket: live dashboard updates ==============
+#
+# The orchestrator's `alert_node` publishes events to the in-process
+# event bus on `dashboard:updates` channel whenever an alert is
+# triggered (final_risk_score >= 4 or an IIUEEU Illegal/Excessive/
+# Unconscionable flag is raised). The /ws/alerts endpoint subscribes
+# and forwards each event to the connected browser tab.
+#
+# In production this would be backed by Redis pub/sub:
+#     redis.subscribe("dashboard:updates")
+# The in-process implementation lives in src/services/events.py
+# and has identical semantics.
+
+@app.websocket("/ws/alerts")
+async def ws_alerts(websocket: WebSocket):
+    """Stream dashboard alert events over WebSocket.
+
+    The protocol is line-delimited JSON; every message is one
+    ``{"channel": str, "event": dict}`` envelope as published by the
+    EventBus.
+    """
+    await websocket.accept()
+    from src.services.events import bus
+
+    try:
+        async for envelope in bus.subscribe():
+            await websocket.send_json(envelope)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        # The bus.subscribe() generator handles its own teardown.
+        pass
 
 
 if __name__ == "__main__":

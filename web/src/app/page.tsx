@@ -10,7 +10,7 @@ import { Pagination, PaginationContent, PaginationItem, PaginationLink, Paginati
 import { Input } from "@/components/ui/input"
 import Image from "next/image"
 import Link from "next/link"
-import { Bot, FileText, ArrowRight, Search, X, Filter } from "lucide-react"
+import { Bot, FileText, ArrowRight, Search, X, Filter, AlertTriangle } from "lucide-react"
 
 interface Stats {
   total_analyzed: number
@@ -69,6 +69,15 @@ async function fetchAnalysesData(filters: Filters): Promise<AnalysisListItem[]> 
 export default function Dashboard() {
   const [crawling, setCrawling] = useState(false)
   const [crawlStatus, setCrawlStatus] = useState("")
+  const [liveStatus, setLiveStatus] = useState<"offline" | "reconnecting" | "live">(
+    "offline",
+  )
+  const [latestAlert, setLatestAlert] = useState<null | {
+    contract_id?: string
+    description?: string
+    agency?: string
+    final_risk_score?: number
+  }>(null)
   const [analyses, setAnalyses] = useState<AnalysisListItem[]>([])
   const [stats, setStats] = useState<Stats>({
     total_analyzed: 0,
@@ -100,6 +109,95 @@ export default function Dashboard() {
     void loadDashboard()
     return () => {
       cancelled = true
+    }
+  }, [filters])
+
+  /**
+   * WebSocket subscription: stream live alert events into the page.
+   * The server publishes high-risk procurements (final_risk_score >= 4
+   * or IIUEEU Illegal/Excessive/Unconscionable) to /ws/alerts. We
+   * refresh stats + the table as each event arrives so operators do
+   * not have to manually re-poll.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    let stopped = false
+    let socket: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+    function connect() {
+      if (stopped) return
+      setLiveStatus("reconnecting")
+      // WebSocket target: prefer NEXT_PUBLIC_WS_URL (e.g. ws://localhost:8000)
+      // so the browser can talk to the FastAPI server directly. Otherwise
+      // fall back to the Next.js origin and rely on any proxy / same-port
+      // resolver configured in deployment.
+      const publicWs = (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_WS_URL) || ""
+      let url: string
+      if (publicWs) {
+        const trimmed = publicWs.replace(/\/+$/, "")
+        url = `${trimmed}/ws/alerts`
+      } else {
+        const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
+        url = `${proto}//${window.location.host}/ws/alerts`
+      }
+      socket = new WebSocket(url)
+      socket.onopen = () => {
+        setLiveStatus("live")
+      }
+      socket.onmessage = async (event) => {
+        try {
+          const envelope = JSON.parse(event.data) as {
+            channel: string
+            event: {
+              kind: string
+              contract_id?: string
+              description?: string
+              agency?: string
+              final_risk_score?: number
+            }
+          }
+          if (envelope?.event?.kind !== "alert_triggered") return
+          // Show a transient banner with the new alert's headline.
+          setLatestAlert({
+            contract_id: envelope.event.contract_id,
+            description: envelope.event.description,
+            agency: envelope.event.agency,
+            final_risk_score: envelope.event.final_risk_score,
+          })
+          // Refresh dashboard data so the new alert row appears.
+          const [statsData, analysesData] = await Promise.all([
+            fetchStatsData(),
+            fetchAnalysesData(filters),
+          ])
+          setStats(statsData)
+          setAnalyses(analysesData)
+        } catch (err) {
+          console.error("ws message error", err)
+        }
+      }
+      socket.onclose = () => {
+        if (stopped) return
+        // Backoff reconnect so the dashboard recovers when the API
+        // server restarts.
+        reconnectTimer = setTimeout(connect, 2000)
+      }
+      socket.onerror = () => {
+        try {
+          socket?.close()
+        } catch {}
+      }
+    }
+
+    connect()
+
+    return () => {
+      stopped = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (socket) {
+        socket.onclose = null
+        socket.close()
+      }
     }
   }, [filters])
 
@@ -249,9 +347,59 @@ export default function Dashboard() {
             {crawlStatus && (
               <span className="text-sm text-muted-foreground">{crawlStatus}</span>
             )}
+            {/* Live status indicator for the WebSocket */}
+            <span
+              className={
+                "ml-auto inline-flex items-center gap-2 text-xs uppercase " +
+                (liveStatus === "live"
+                  ? "text-green-500"
+                  : liveStatus === "reconnecting"
+                    ? "text-amber-500"
+                    : "text-muted-foreground")
+              }
+              data-testid="ws-status"
+            >
+              <span
+                aria-hidden
+                className={
+                  "h-2 w-2 rounded-full " +
+                  (liveStatus === "live"
+                    ? "bg-green-500"
+                    : liveStatus === "reconnecting"
+                      ? "bg-amber-500 animate-pulse"
+                      : "bg-muted")
+                }
+              />
+              {liveStatus === "live"
+                ? "Live"
+                : liveStatus === "reconnecting"
+                  ? "Reconnecting\u2026"
+                  : "Offline"}
+            </span>
           </div>
         </CardContent>
       </Card>
+
+      {/* Live alert banner -- shown briefly after a WS push */}
+      {latestAlert && (
+        <Alert className="mb-6 border-destructive/50 bg-destructive/10">
+          <AlertTriangle className="h-4 w-4 text-destructive" />
+          <AlertDescription className="flex items-center justify-between gap-4">
+            <span>
+              <strong className="font-mono">{latestAlert.contract_id}</strong>{" "}
+              flagged {latestAlert.description} ({latestAlert.agency || "agency n/a"})
+              <span className="ml-2 text-xs uppercase">
+                <Badge variant="destructive" className="ml-1">
+                  {latestAlert.final_risk_score}/5
+                </Badge>
+              </span>
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => setLatestAlert(null)}>
+              <X className="h-3 w-3" />
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* History Table */}
       <Card>
