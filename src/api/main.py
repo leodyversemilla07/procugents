@@ -2,10 +2,17 @@
 FastAPI Server for RedFlag Agents PH Dashboard
 """
 
-from fastapi import FastAPI, HTTPException
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+
+from src.servers.a2a_server import (
+    handle_jsonrpc_request,
+    _A2AError,
+)
 
 app = FastAPI(title="ProcuGents API")
 
@@ -36,11 +43,11 @@ class StatsResponse(BaseModel):
 a2a_server = None
 
 
-def get_a2a_server():
+def get_a2a_server(base_url: str = "http://localhost:8000"):
     global a2a_server
     if a2a_server is None:
         from src.servers.a2a_server import A2AServer
-        a2a_server = A2AServer()
+        a2a_server = A2AServer(base_url=base_url)
     return a2a_server
 
 
@@ -48,54 +55,93 @@ def get_a2a_server():
 def health():
     return {"status": "ok"}
 
+# ============== A2A v1.0 Protocol Endpoints ==============
+# JSON-RPC 2.0 over HTTP at /a2a/jsonrpc (canonical A2A transport per spec
+# Section 9), plus a parallel HTTP+JSON REST surface that wraps the same
+# operations for clients that prefer /a2a/tasks/{id}-style URLs.
 
-# ============== A2A Protocol Endpoints ==============
+
+class _JSONRPCRequest(BaseModel):
+    """JSON-RPC 2.0 envelope per RFC 7049."""
+    jsonrpc: str
+    method: str
+    params: dict[str, Any] | None = None
+    id: int | str | None = None
+
+
+@app.post("/a2a/jsonrpc")
+async def a2a_jsonrpc(request: _JSONRPCRequest, raw_req: Request):
+    """A2A v1.0 canonical JSON-RPC endpoint.
+
+    Accepts a single JSON-RPC 2.0 envelope and returns a single response
+    envelope (or ``{}`` for notifications without ``id``).
+    """
+    body = request.model_dump()
+    server = get_a2a_server(base_url=str(raw_req.base_url).rstrip("/"))
+    resp = await handle_jsonrpc_request(server, body)
+    return resp
+
+
+# --- HTTP+JSON / REST equivalents (Section 11 of the A2A spec) -----------
+
 
 @app.get("/a2a/card")
-def get_agent_card():
-    """A2A: Get agent card for discovery."""
-    server = get_a2a_server()
+def a2a_discovery(raw_req: Request):
+    """Agent Card discovery (the ``.well-known``-style GET).
+
+    Mirrors the JSON-RPC ``agent/card`` style endpoint: clients discover
+    capabilities and the JSON-RPC URL by GETting this resource.
+    """
+    server = get_a2a_server(base_url=str(raw_req.base_url).rstrip("/"))
     return server.get_agent_card()
 
 
-class A2ATaskRequest(BaseModel):
-    """A2A task request."""
-    task_id: str
-    message: str
-    contract_id: str | None = None
-    contract_amount: float | None = None
-    description: str | None = None
-
-
-@app.post("/a2a/tasks")
-async def create_task(request: A2ATaskRequest):
-    """A2A: Submit a task for processing."""
-    from src.servers.a2a_server import TaskMessage
-
-    server = get_a2a_server()
-
-    task = TaskMessage(
-        task_id=request.task_id,
-        message=request.message,
-        metadata={
-            "contract_id": request.contract_id,
-            "contract_amount": request.contract_amount,
-            "description": request.description,
-        },
-    )
-
-    result = await server.handle_task(task)
-    return result
-
-
 @app.get("/a2a/tasks/{task_id}")
-def get_task(task_id: str):
-    """A2A: Get task status."""
+async def a2a_get_task(task_id: str):
+    """REST equivalent of ``tasks/get``."""
     server = get_a2a_server()
-    result = server.get_task_status(task_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return result
+    try:
+        return server.op_get_task(id=task_id)
+    except Exception as exc:
+        raise _a2a_error_to_http(exc)
+
+
+@app.post("/a2a/tasks/{task_id}:cancel")
+async def a2a_cancel_task(task_id: str):
+    """REST equivalent of ``tasks/cancel``.
+
+    Returns the cancelled Task (idempotent on terminal tasks returns
+    A2A_TASK_NOT_CANCELABLE -> HTTP 409).
+    """
+    server = get_a2a_server()
+    try:
+        # op_cancel_task awaits its lock, so we await on python 3.12+.
+        result = server.op_cancel_task(id=task_id)
+        import inspect
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+    except Exception as exc:
+        raise _a2a_error_to_http(exc)
+
+
+def _a2a_error_to_http(exc: Exception):
+    """Map internal _A2AError to HTTPException with appropriate status."""
+    if not isinstance(exc, _A2AError):
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    code_to_status = {
+        -32602: 400,  # RPC_INVALID_PARAMS
+        -32001: 404,  # A2A_TASK_NOT_FOUND
+        -32002: 409,  # A2A_TASK_NOT_CANCELABLE
+        -32003: 400,  # A2A_PUSH_NOT_SUPPORTED
+        -32004: 400,  # A2A_UNSUPPORTED_OPERATION
+        -32005: 415,  # A2A_CONTENT_TYPE_NOT_SUPPORTED
+    }
+    return HTTPException(
+        status_code=code_to_status.get(exc.code, 400),
+        detail={"code": exc.code, "message": str(exc), "data": exc.data},
+    )
 
 
 @app.get("/api/stats")
