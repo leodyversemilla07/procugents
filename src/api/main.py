@@ -2,6 +2,7 @@
 FastAPI Server for RedFlag Agents PH Dashboard
 """
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -82,7 +83,78 @@ async def a2a_jsonrpc(request: _JSONRPCRequest, raw_req: Request):
     return resp
 
 
-# --- HTTP+JSON / REST equivalents (Section 11 of the A2A spec) -----------
+@app.get("/a2a/tasks/{task_id}:subscribe")
+async def a2a_subscribe_sse(task_id: str, raw_req: Request):
+    """SSE stream of task state transitions.
+
+    Per A2A v1.0 Section 4.3, the first event carries the current
+    full ``Task`` object; subsequent events carry incremental state
+    transitions as they happen. Events use the SSE ``data:`` format::
+
+        data: {"jsonrpc":"2.0","id":"sub-<task_id>","result":{...}}
+
+    The client disconnects by closing the HTTP connection.
+    """
+    import json
+
+    from src.servers.a2a_server import task_update_channel
+    from src.services.events import bus
+
+    server = get_a2a_server()
+
+    # Check the task exists.
+    try:
+        task = server.op_get_task(id=task_id)
+    except Exception as exc:
+        raise _a2a_error_to_http(exc)
+
+    sub_id = f"sub-{task_id}"
+
+    async def _event_stream() -> AsyncIterator[str]:
+        # 1. Emit the current snapshot.
+        initial_state = task.get("status", {}).get("state")
+        initial = {
+            "jsonrpc": "2.0",
+            "id": sub_id,
+            "result": task,
+        }
+        yield f"data: {json.dumps(initial)}\n\n"
+
+        # If the task is already terminal, the snapshot is the only
+        # event — no need to subscribe for new transitions.
+        if initial_state in {
+            "completed", "failed", "canceled", "rejected",
+        }:
+            return
+
+        # 2. Subscribe to task-state changes via the in-process EventBus.
+        async with bus.subscribe() as sub:
+            async for envelope in sub:
+                if envelope.get("channel") == task_update_channel(task_id):
+                    event = {
+                        "jsonrpc": "2.0",
+                        "id": sub_id,
+                        "result": envelope["event"],
+                    }
+                    yield f"data: {json.dumps(event)}\n\n"
+                # Check if task is terminal; if so, send a final event and stop.
+                task_state = envelope["event"].get("status", {}).get("state")
+                if task_state in {
+                    "completed", "failed", "canceled", "rejected",
+                }:
+                    break
+
+    from fastapi.responses import StreamingResponse
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/a2a/card")

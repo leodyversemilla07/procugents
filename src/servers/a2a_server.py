@@ -36,7 +36,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -67,6 +66,11 @@ A2A_PUSH_NOT_SUPPORTED = -32003
 A2A_UNSUPPORTED_OPERATION = -32004
 A2A_CONTENT_TYPE_NOT_SUPPORTED = -32005
 A2A_INVALID_AGENT_RESPONSE = -32006
+
+
+def task_update_channel(task_id: str) -> str:
+    """EventBus channel for a specific task's state transitions."""
+    return f"task:{task_id}"
 
 
 # Task state machine (spec Section 2.2 / proto enum TaskState).
@@ -239,9 +243,9 @@ def build_agent_card(base_url: str, *, extended: bool = False) -> dict:
         ],
         "provider": {"organization": PROVIDER_ORG, "url": PROVIDER_URL},
         "capabilities": {
-            # Streaming: explicitly disabled (sync orchestrator + no SSE).
+            # Streaming: enabled via SSE on /a2a/tasks/{id}:subscribe.
             # Push notifications: no webhook delivery wired in dev.
-            "streaming": False,
+            "streaming": True,
             "push_notifications": False,
             "extended_agent_card": True,
         },
@@ -354,6 +358,8 @@ class A2AServer:
             task.state = new_state
             task.status = task_status(new_state, message=message)
             task.updated_at = time.time()
+        # Emit outside the lock to avoid any risk of reentrancy.
+        await self._emit_task_event(task)
 
 
 
@@ -514,6 +520,7 @@ class A2AServer:
             task.status = task_status(TASK_STATE_COMPLETED, message=assistant_msg)
             task.result_output = output
             task.updated_at = time.time()
+        await self._emit_task_event(task)
         return task.to_wire()
 
     def op_get_task(self, *,
@@ -611,6 +618,7 @@ class A2AServer:
             task.state = TASK_STATE_CANCELED
             task.status = task_status(TASK_STATE_CANCELED, message=note)
             task.updated_at = time.time()
+        await self._emit_task_event(task)
         return task.to_wire()
 
     def op_get_authenticated_extended_card(self, *,
@@ -623,15 +631,33 @@ class A2AServer:
 
 
 
-    # ---- Disabled-by-capability stubs ---------------------------------
+    # ---- Real streaming + disabled-by-capability stubs ---------------
 
     async def op_send_streaming_message(self, **kwargs):
+        """message/stream — remains disabled.
+
+        We support streaming via ``tasks/subscribe`` + SSE, not via
+        ``message/stream``. The latter would require the client to keep
+        the JSON-RPC POST connection open, which is less practical than
+        the dedicated SSE endpoint.
+        """
         self._raise(A2A_UNSUPPORTED_OPERATION,
-                    data={"reason": "streaming capability is false in AgentCard"})
+                    data={"reason": "use tasks/subscribe + SSE instead"})
 
     async def op_subscribe_to_task(self, *, id: str, tenant=None):
-        self._raise(A2A_UNSUPPORTED_OPERATION,
-                    data={"reason": "streaming capability is false in AgentCard"})
+        """tasks/subscribe — acknowledge with current task state.
+
+        Returns the task snapshot immediately; the client should then
+        connect to the SSE endpoint at ``stream_url`` for ongoing
+        state transition events.
+        """
+        task = self._tasks.get(id)
+        if task is None:
+            self._raise(A2A_TASK_NOT_FOUND, data={"task_id": id})
+        return {
+            "task": task.to_wire(),
+            "stream_url": f"{self.base_url}/a2a/tasks/{id}:subscribe",
+        }
 
     def op_create_push_config(self, **kwargs):
         self._raise(A2A_PUSH_NOT_SUPPORTED,
@@ -646,6 +672,22 @@ class A2AServer:
     def op_delete_push_config(self, **kwargs):
         self._raise(A2A_PUSH_NOT_SUPPORTED)
 
+    # ---- Task event emission -------------------------------------
+
+    async def _emit_task_event(self, task: _StoredTask) -> None:
+        """Publish a task-state change to the in-process event bus.
+
+        The SSE layer (``/a2a/tasks/{id}:subscribe``) picks this up via
+        ``bus.subscribe()`` on the per-task channel and pushes it down
+        the wire as an SSE ``data:`` line.
+        """
+        try:
+            from src.services.events import bus
+
+            await bus.publish(task_update_channel(task.id), task.to_wire())
+        except Exception:
+            logger.exception("failed to emit task event for %s", task.id)
+
 
 # ---------------------------------------------------------------------------
 # JSON-RPC 2.0 dispatcher (Section 9 of the A2A v1.0 spec)
@@ -653,7 +695,10 @@ class A2AServer:
 
 
 # Maps JSON-RPC method names (proto RPC service definitions) to handlers.
-# Second tuple element flags SSE-style streaming (we reject those).
+# Second tuple element flags SSE-style streaming (reserved for future use).
+# ``tasks/subscribe`` returns a normal JSON-RPC response (not SSE on
+# the JSON-RPC endpoint); streaming happens via the dedicated
+# ``/a2a/tasks/{id}:subscribe`` SSE endpoint in main.py.
 METHOD_REGISTRY = {
     "message/send":                      ("op_send_message",                       False),
     "message/stream":                     ("op_send_streaming_message",             False),
