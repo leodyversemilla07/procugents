@@ -387,6 +387,95 @@ def get_analysis_detail(analysis_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============== Alert Management Endpoints ==============
+
+
+class AlertResolveRequest(BaseModel):
+    resolution_notes: str = ""
+
+
+@app.get("/api/alerts")
+def list_alerts(
+    limit: int = 50,
+    offset: int = 0,
+    status: str | None = None,
+    severity: str | None = None,
+    contract_id: str | None = None,
+):
+    """List alerts with optional filters."""
+    from src.services.database import get_db, init_db, Alert as AlertModel
+
+    init_db()
+    try:
+        with get_db() as db:
+            query = db.query(AlertModel)
+            if status:
+                query = query.filter(AlertModel.status == status)
+            if severity:
+                query = query.filter(AlertModel.severity == severity)
+            if contract_id:
+                query = query.filter(AlertModel.contract_id == contract_id)
+
+            total = query.count()
+            items = query.order_by(AlertModel.created_at.desc()).offset(offset).limit(limit).all()
+
+            return {
+                "items": [
+                    {
+                        "id": a.id,
+                        "title": a.title,
+                        "description": a.description,
+                        "level": a.level,
+                        "severity": a.severity,
+                        "contract_id": a.contract_id,
+                        "status": a.status,
+                        "resolution_notes": a.resolution_notes,
+                        "created_at": a.created_at.isoformat() if a.created_at else None,
+                        "resolved_at": a.resolved_at.isoformat() if a.resolved_at else None,
+                    }
+                    for a in items
+                ],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/alerts/{alert_id}")
+def resolve_alert(alert_id: int, body: AlertResolveRequest):
+    """Mark an alert as resolved (optionally with notes)."""
+    from datetime import UTC, datetime
+    from src.services.database import get_db, init_db, Alert as AlertModel
+
+    init_db()
+    try:
+        with get_db() as db:
+            alert = db.query(AlertModel).filter(AlertModel.id == alert_id).first()
+            if not alert:
+                raise HTTPException(status_code=404, detail="Alert not found")
+
+            alert.status = "resolved"
+            alert.resolved_at = datetime.now(UTC)
+            if body.resolution_notes:
+                alert.resolution_notes = body.resolution_notes
+            db.commit()
+            db.refresh(alert)
+
+            return {
+                "id": alert.id,
+                "title": alert.title,
+                "status": alert.status,
+                "resolved_at": alert.resolved_at.isoformat() if alert.resolved_at else None,
+                "resolution_notes": alert.resolution_notes,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== Auto-Crawl Endpoints ==============
 
 @app.post("/api/crawl")

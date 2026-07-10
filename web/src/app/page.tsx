@@ -4,13 +4,14 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty"
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination"
 import { Input } from "@/components/ui/input"
 import Image from "next/image"
 import Link from "next/link"
-import { Bot, FileText, ArrowRight, Search, X, Filter, AlertTriangle } from "lucide-react"
+import { Bot, FileText, ArrowRight, Search, X, Filter, AlertTriangle, Bell } from "lucide-react"
 
 interface Stats {
   total_analyzed: number
@@ -272,10 +273,23 @@ export default function Dashboard() {
     <div className="min-h-screen bg-background p-6">
       {/* Header */}
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold flex items-center gap-3">
-          <Image src="/logo.png" alt="ProcuGents" width={32} height={32} className="h-8 w-auto" priority />
-          ProcuGents
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold flex items-center gap-3">
+            <Image src="/logo.png" alt="ProcuGents" width={32} height={32} className="h-8 w-auto" priority />
+            ProcuGents
+          </h1>
+          <Link href="/alerts">
+            <Button variant="outline" size="sm" className="gap-2">
+              <Bell className="h-4 w-4" />
+              Alerts
+              {stats.active_alerts > 0 && (
+                <Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
+                  {stats.active_alerts}
+                </Badge>
+              )}
+            </Button>
+          </Link>
+        </div>
         <p className="text-muted-foreground mt-1">
           Automated Philippine Government Procurement Anomaly Detection
         </p>
