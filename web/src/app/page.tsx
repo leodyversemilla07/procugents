@@ -11,7 +11,7 @@ import { Pagination, PaginationContent, PaginationItem, PaginationLink, Paginati
 import { Input } from "@/components/ui/input"
 import Image from "next/image"
 import Link from "next/link"
-import { Bot, FileText, ArrowRight, Search, X, Filter, AlertTriangle, Bell } from "lucide-react"
+import { Bot, FileText, ArrowRight, Search, X, Filter, AlertTriangle, Bell, BarChart3 } from "lucide-react"
 
 interface Stats {
   total_analyzed: number
@@ -278,17 +278,25 @@ export default function Dashboard() {
             <Image src="/logo.png" alt="ProcuGents" width={32} height={32} className="h-8 w-auto" priority />
             ProcuGents
           </h1>
-          <Link href="/alerts">
-            <Button variant="outline" size="sm" className="gap-2">
-              <Bell className="h-4 w-4" />
-              Alerts
-              {stats.active_alerts > 0 && (
-                <Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
-                  {stats.active_alerts}
-                </Badge>
-              )}
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link href="/analytics">
+              <Button variant="ghost" size="sm" className="gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Analytics
+              </Button>
+            </Link>
+            <Link href="/alerts">
+              <Button variant="outline" size="sm" className="gap-2">
+                <Bell className="h-4 w-4" />
+                Alerts
+                {stats.active_alerts > 0 && (
+                  <Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
+                    {stats.active_alerts}
+                  </Badge>
+                )}
+              </Button>
+            </Link>
+          </div>
         </div>
         <p className="text-muted-foreground mt-1">
           Automated Philippine Government Procurement Anomaly Detection

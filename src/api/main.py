@@ -476,6 +476,99 @@ def resolve_alert(alert_id: int, body: AlertResolveRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============== Analytics / Cohort Endpoints ==============
+
+
+@app.get("/api/analytics/cohorts")
+def cohort_analytics(
+    min_date: str | None = None,
+    max_date: str | None = None,
+    min_risk: int | None = None,
+    limit: int = 20,
+):
+    """Aggregate procurement metrics per agency (cohort view)."""
+    from sqlalchemy import func, Integer
+    from src.services.database import get_db, init_db, ProcurementAnalysis
+
+    init_db()
+    try:
+        with get_db() as db:
+            query = db.query(
+                ProcurementAnalysis.agency,
+                func.count(ProcurementAnalysis.id).label("contract_count"),
+                func.sum(ProcurementAnalysis.contract_amount).label("total_amount"),
+                func.avg(ProcurementAnalysis.final_risk_score).label("avg_risk_score"),
+                func.max(ProcurementAnalysis.final_risk_score).label("max_risk_score"),
+                func.sum(
+                    func.cast(ProcurementAnalysis.alert_triggered, Integer)
+                ).label("alert_count"),
+            ).filter(
+                ProcurementAnalysis.agency.isnot(None),
+                ProcurementAnalysis.agency != "",
+            )
+
+            if min_date:
+                query = query.filter(ProcurementAnalysis.created_at >= min_date)
+            if max_date:
+                query = query.filter(ProcurementAnalysis.created_at <= max_date)
+            if min_risk is not None:
+                query = query.filter(ProcurementAnalysis.final_risk_score >= min_risk)
+
+            rows = query.group_by(ProcurementAnalysis.agency).order_by(
+                func.count(ProcurementAnalysis.id).desc()
+            ).limit(limit).all()
+
+            cohorts = []
+            for row in rows:
+                cohorts.append(
+                    {
+                        "agency": row[0] or "Unknown",
+                        "contract_count": int(row[1] or 0),
+                        "total_amount": float(row[2] or 0),
+                        "avg_risk_score": round(float(row[3] or 1), 1),
+                        "max_risk_score": int(row[4] or 1),
+                        "alert_count": int(row[5] or 0),
+                    }
+                )
+
+            # Derive high_risk_count and anomaly_count per agency.
+            for c in cohorts:
+                high = (
+                    db.query(ProcurementAnalysis)
+                    .filter(
+                        ProcurementAnalysis.agency == c["agency"],
+                        ProcurementAnalysis.final_risk_score >= 4,
+                    )
+                    .count()
+                )
+                c["high_risk_count"] = high
+                # Count rows where anomalies is not null
+                anomaly_count = (
+                    db.query(ProcurementAnalysis)
+                    .filter(
+                        ProcurementAnalysis.agency == c["agency"],
+                        ProcurementAnalysis.anomalies.isnot(None),
+                    )
+                    .count()
+                )
+                c["anomaly_count"] = anomaly_count
+                c["anomaly_rate"] = round(
+                    (c["anomaly_count"] / c["contract_count"] * 100)
+                    if c["contract_count"] > 0 else 0,
+                    1,
+                )
+                c["compliance_rate"] = round(
+                    ((c["contract_count"] - c["alert_count"]) / c["contract_count"] * 100)
+                    if c["contract_count"] > 0 else 0,
+                    1,
+                )
+                c["total_amount_formatted"] = f"PHP {c['total_amount']:,.2f}"
+
+            return {"cohorts": cohorts, "total_agencies": len(cohorts)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== Auto-Crawl Endpoints ==============
 
 @app.post("/api/crawl")
