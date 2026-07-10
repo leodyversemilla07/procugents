@@ -1,18 +1,21 @@
-"""
-PhilGEPS scraper functions for RedFlag Agents PH.
-Separated from MCP server for direct import.
+"""PhilGEPS data-access layer using the pluggable client registry.
 
-Public functions:
+Public functions (unchanged signature for backwards compatibility):
     search_philgeps(keyword, category, year) -> dict
     get_agency_procurement(agency_name, year, limit) -> dict
     check_notice_compliance(notice_id) -> dict
 
-Falls back to shared mock data (philgeps_mock.MOCK_PROCUREMENTS) when the live
-PhilGEPS endpoint is unreachable or requires authentication.
+Each function delegates to the client returned by
+``src.servers.mcp.philgeps.get_client()``, which is the mock client by
+default and the live HTTP scraper when ``PHILGEPS_LIVE=true``.
 """
 
+from __future__ import annotations
+
+import logging
 from typing import Any
 
+from src.servers.mcp.philgeps import get_client
 from src.servers.mcp.philgeps_mock import (
     find_by_agency as _find_by_agency,
     find_by_notice as _find_by_notice,
@@ -22,97 +25,7 @@ from src.servers.mcp.philgeps_mock import (
 # Backwards-compat: prior code referenced an internal _search_by_agency symbol.
 _search_by_agency = _find_by_agency
 
-PHILGEPS_URL = "https://philgeps.gov.ph"
-USER_AGENT = "Mozilla/5.0 (compatible; RedFlagAgentsPH/1.0)"
-
-
-async def _try_live_search(keyword: str, category: str, year: int | None) -> list[dict[str, Any]] | None:
-    """Return live search results from PhilGEPS, or None if unreachable."""
-    try:
-        import httpx
-        from bs4 import BeautifulSoup
-
-        params: dict[str, str] = {"q": keyword, "category": category}
-        if year:
-            params["year"] = str(year)
-
-        headers = {"User-Agent": USER_AGENT}
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{PHILGEPS_URL}/search",
-                params=params,
-                headers=headers,
-                timeout=10.0,
-                follow_redirects=True,
-            )
-
-            if response.status_code != 200:
-                return None
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            results = []
-            for row in soup.select(".result-row, .procurement-item"):
-                link = row.select_one("a")
-                agency_elem = row.select_one(".agency, .requesting-office")
-                if link:
-                    results.append({
-                        "title": link.get_text(strip=True),
-                        "url": link.get("href", ""),
-                        "agency": agency_elem.get_text(strip=True) if agency_elem else None,
-                    })
-            return results[:20] if results else None
-    except Exception:
-        return None
-
-
-async def _try_live_agency(agency_name: str, limit: int) -> list[dict[str, Any]] | None:
-    """Return live agency search results from PhilGEPS, or None if unreachable."""
-    try:
-        import httpx
-        from bs4 import BeautifulSoup
-
-        headers = {"User-Agent": USER_AGENT}
-        params = {"agency": agency_name, "limit": str(limit)}
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{PHILGEPS_URL}/agency/search",
-                params=params,
-                headers=headers,
-                timeout=10.0,
-            )
-
-            if response.status_code != 200:
-                return None
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            results = []
-            for row in soup.select(".result-row")[:limit]:
-                link = row.select_one("a")
-                if link:
-                    results.append({
-                        "title": link.get_text(strip=True),
-                        "url": link.get("href", ""),
-                    })
-            return results if results else None
-    except Exception:
-        return None
-
-
-async def _try_live_compliance(notice_id: str) -> bool:
-    """Return True if the live PhilGEPS endpoint reports the notice, else False."""
-    try:
-        import httpx
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{PHILGEPS_URL}/notice/{notice_id}",
-                timeout=10.0,
-            )
-            return response.status_code == 200
-    except Exception:
-        return False
+logger = logging.getLogger(__name__)
 
 
 async def search_philgeps(
@@ -121,15 +34,18 @@ async def search_philgeps(
     year: int | None = None,
 ) -> dict[str, Any]:
     """Search PhilGEPS for government procurement opportunities."""
-    live = await _try_live_search(keyword, category, year)
-    if live is not None:
+    client = get_client()
+    results = await client.search(keyword=keyword, category=category, year=year)
+    if results is not None:
         return {
             "keyword": keyword,
             "category": category,
             "year": year,
-            "results": live,
+            "source": client.name,
+            "results": results,
         }
 
+    # Fallback: mock (should not normally be reached — mock never returns None)
     return {
         "keyword": keyword,
         "category": category,
@@ -145,9 +61,17 @@ async def get_agency_procurement(
     limit: int = 10,
 ) -> dict[str, Any]:
     """Get procurement history for a specific government agency."""
-    live = await _try_live_agency(agency_name, limit)
-    if live is not None:
-        return {"agency": agency_name, "year": year, "results": live}
+    client = get_client()
+    results = await client.get_agency_procurement(
+        agency_name=agency_name, year=year, limit=limit
+    )
+    if results is not None:
+        return {
+            "agency": agency_name,
+            "year": year,
+            "source": client.name,
+            "results": results,
+        }
 
     return {
         "agency": agency_name,
@@ -159,9 +83,12 @@ async def get_agency_procurement(
 
 async def check_notice_compliance(notice_id: str) -> dict[str, Any]:
     """Check PhilGEPS posting compliance for a specific notice."""
-    if await _try_live_compliance(notice_id):
-        return {"notice_id": notice_id, "compliant": True}
+    client = get_client()
+    item = await client.check_notice_compliance(notice_id)
+    if item is not None:
+        return {**item, "compliant": True, "source": client.name}
 
+    # Fallback to mock lookup
     item = _find_by_notice(notice_id)
     if item is not None:
         return {
