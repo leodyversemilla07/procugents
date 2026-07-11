@@ -45,6 +45,9 @@ services:
       - POSTGRES_DB=redflag_agents
       - REDIS_URL=redis://cache:6379
       - NEXT_PUBLIC_API_URL=http://web:3000
+      - EXA_API_KEY=${EXA_API_KEY:-}
+      - CRAWL_INTERVAL_MINUTES=${CRAWL_INTERVAL_MINUTES:-}
+      - PHILGEPS_LIVE=${PHILGEPS_LIVE:-}
     volumes:
       - ./data:/app/data
     healthcheck:
