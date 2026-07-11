@@ -4,16 +4,51 @@ Periodically fetches new procurement notices and runs the full 5-agent
 analysis pipeline. For each notice the script maps PhilGEPS metadata to
 the orchestrator state (procurement_type, bidders, etc.) so the
 bid_analyzer and doc_auditor nodes produce meaningful flags.
+
+Scheduler
+---------
+Call ``start_crawl_scheduler(app_state)`` from the FastAPI lifespan to run
+``auto_scan_all`` on a configurable interval. The interval defaults to
+60 minutes and can be overridden via the ``CRAWL_INTERVAL_MINUTES``
+environment variable.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from datetime import datetime
 from typing import Any
 
 from src.orchestration.orchestrator import analyze_procurement
 from src.services.database import init_db
+
+logger = logging.getLogger(__name__)
+
+# Default / env interval
+_DEFAULT_INTERVAL_MINUTES = 60
+
+
+def _interval_seconds() -> int | None:
+    """Crawl interval in seconds, or None to disable the scheduler.
+
+    Returns ``None`` when ``CRAWL_INTERVAL_MINUTES`` is not set, empty,
+    or set to a value <= 0. The FastAPI lifespan checks for ``None`` and
+    skips starting the background task unless the operator has explicitly
+    opted in by setting a positive value.
+    """
+    raw = os.environ.get("CRAWL_INTERVAL_MINUTES")
+    if not raw:
+        return None
+    try:
+        minutes = int(raw)
+        if minutes <= 0:
+            return None
+        return minutes * 60
+    except ValueError:
+        return None
+
 
 # Philippine government agencies to monitor
 AGENCIES = [
@@ -215,6 +250,51 @@ async def auto_scan_all() -> dict[str, Any]:
         })
 
     return all_results
+
+
+# ---------------------------------------------------------------------------
+# Periodic scheduler — launched from the FastAPI lifespan
+# ---------------------------------------------------------------------------
+
+
+async def crawl_scheduler_loop(
+    interval_seconds: int,
+    stop_event: asyncio.Event,
+) -> None:
+    """Background loop that runs ``auto_scan_all()`` on a timer.
+
+    One scan runs immediately on start, then repeats every
+    ``interval_seconds`` until ``stop_event`` is set. Exceptions from
+    a single scan are caught and logged so the loop continues.
+    """
+    logger.info(
+        "crawl scheduler started (interval=%ds)",
+        interval_seconds,
+    )
+    while not stop_event.is_set():
+        try:
+            result = await auto_scan_all()
+            analyzed = result.get("total_analyzed", 0)
+            anomalies = result.get("total_anomalies", 0)
+            logger.info(
+                "crawl cycle complete: %d contracts, %d anomalies",
+                analyzed,
+                anomalies,
+            )
+        except Exception:
+            logger.exception("crawl cycle failed")
+        # Wait for the interval or until stopped.
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=interval_seconds,
+            )
+            # If stop_event was set during the wait, exit loop.
+            break
+        except TimeoutError:
+            # Normal — interval elapsed, continue to next cycle.
+            pass
+    logger.info("crawl scheduler stopped")
 
 
 if __name__ == "__main__":

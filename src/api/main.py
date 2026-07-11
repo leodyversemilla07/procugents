@@ -2,6 +2,7 @@
 FastAPI Server for RedFlag Agents PH Dashboard
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -72,12 +73,40 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup: initialize the database. Shutdown: dispose the connection pool."""
+    """Startup: initialize the database and start the crawl scheduler.
+    Shutdown: dispose the database engine and stop the crawl scheduler.
+    """
     logger.info("initializing database")
     from src.services.database import engine, init_db
 
     init_db()
+
+    # Start the periodic PhilGEPS crawl scheduler (opt-in via
+    # CRAWL_INTERVAL_MINUTES env var).
+    from src.scripts.auto_crawl import crawl_scheduler_loop, _interval_seconds
+
+    interval = _interval_seconds()
+    crawl_stop = asyncio.Event()
+    crawl_task: asyncio.Task | None = None
+    if interval is not None:
+        crawl_task = asyncio.create_task(
+            crawl_scheduler_loop(interval, crawl_stop)
+        )
+    app.state.crawl_stop = crawl_stop
+    app.state.crawl_task = crawl_task
+
     yield
+
+    # Shutdown: signal the crawl loop and wait for it to finish.
+    if crawl_task is not None:
+        logger.info("stopping crawl scheduler")
+        crawl_stop.set()
+        crawl_task.cancel()
+        from contextlib import suppress
+
+        with suppress(asyncio.CancelledError, Exception):
+            await crawl_task
+
     logger.info("disposing database engine")
     engine.dispose()
 
