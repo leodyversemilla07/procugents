@@ -6,9 +6,9 @@
  * content-type regardless of which env the code runs in.
  */
 
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || ""
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
 export const API_HEADERS: Record<string, string> = {
-  "Content-Type": "application/json",
-  ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
-}
+	"Content-Type": "application/json",
+	...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+};

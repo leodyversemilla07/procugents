@@ -1,0 +1,83 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"ignoreUnknown": false,
+		"includes": ["**", "!.*/**"]
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 100
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"correctness": {
+				"noBeforeInteractiveScriptOutsideDocument": "warn",
+				"noNextAsyncClientComponent": "warn",
+				"noUnusedVariables": "error",
+				"useExhaustiveDependencies": "warn",
+				"useHookAtTopLevel": "error",
+				"useInlineScriptId": "error",
+				"useJsxKeyInIterable": "error"
+			},
+			"performance": {
+				"noImgElement": "warn",
+				"noSyncScripts": "error",
+				"noUnwantedPolyfillio": "warn",
+				"useGoogleFontPreconnect": "warn"
+			},
+			"style": {
+				"noCommonJs": "error",
+				"noHeadElement": "warn",
+				"useArrayLiterals": "error",
+				"useAsConstAssertion": "error"
+			},
+			"suspicious": {
+				"noDocumentImportInPage": "error",
+				"noDuplicateEnumValues": "error",
+				"noExplicitAny": "error",
+				"noExtraNonNullAssertion": "error",
+				"noHeadImportInDocument": "error",
+				"noMisleadingInstantiator": "error",
+				"noUnsafeDeclarationMerging": "error",
+				"useGoogleFontDisplay": "warn",
+				"useNamespaceKeyword": "error"
+			},
+			"a11y": {
+				"useAltText": "warn",
+				"useValidAriaProps": "warn"
+			},
+			"security": {
+				"noDangerouslySetInnerHtmlWithChildren": "error"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"semicolons": "always",
+			"trailingCommas": "all"
+		},
+		"globals": ["React"]
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	}
+}

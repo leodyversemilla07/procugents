@@ -1,36 +1,35 @@
-import { NextRequest, NextResponse } from "next/server"
-import { API_HEADERS } from "@/lib/api-headers"
+import { type NextRequest, NextResponse } from "next/server";
+import { API_HEADERS } from "@/lib/api-headers";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export async function POST(req: NextRequest) {
-  try {
-    let agency = ""
-    try {
-      const body = await req.json()
-      agency = body.agency || ""
-    } catch {
-      // No body, use default
-    }
+	try {
+		let agency = "";
+		try {
+			const body = await req.json();
+			agency = body.agency || "";
+		} catch {
+			// No body, use default
+		}
 
-    const url = agency ? `${API_BASE}/api/crawl?agency=${encodeURIComponent(agency)}` : `${API_BASE}/api/crawl`
-    
-    const res = await fetch(url, {
-      method: "POST",
-      headers: API_HEADERS,
-    })
+		const url = agency
+			? `${API_BASE}/api/crawl?agency=${encodeURIComponent(agency)}`
+			: `${API_BASE}/api/crawl`;
 
-    if (!res.ok) {
-      throw new Error(`API error: ${res.status}`)
-    }
+		const res = await fetch(url, {
+			method: "POST",
+			headers: API_HEADERS,
+		});
 
-    const data = await res.json()
-    return NextResponse.json(data)
-  } catch (error) {
-    console.error(error)
-    return NextResponse.json(
-      { error: String(error), analyzed: 0 },
-      { status: 500 }
-    )
-  }
+		if (!res.ok) {
+			throw new Error(`API error: ${res.status}`);
+		}
+
+		const data = await res.json();
+		return NextResponse.json(data);
+	} catch (error) {
+		console.error(error);
+		return NextResponse.json({ error: String(error), analyzed: 0 }, { status: 500 });
+	}
 }
