@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 
 from pydantic import BaseModel
 from sqlalchemy import create_engine
@@ -186,4 +187,4 @@ class AnalysisResponse(BaseModel):
     anomalies: list[dict] = []
     alerts_created: list[dict] = []
     error: str | None = None
-    created_at: datetime  # type: ignore[name-defined]  # noqa: F821
+    created_at: datetime

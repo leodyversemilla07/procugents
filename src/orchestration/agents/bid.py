@@ -25,6 +25,20 @@ from src.orchestration.state import (
 )
 
 
+def _is_synthetic_bidders(bidders: list[dict[str, Any]]) -> bool:
+    """True when every bidder is tagged ``synthetic`` (prototype fixture).
+
+    When the procurement has at least one bidder, all of which are
+    synthetic, flags derived purely from bidder metadata should be labelled
+    so the dashboard can distinguish real collusion signal from fixture
+    noise. An empty bidder list is NOT synthetic (there's nothing to base
+    flags on).
+    """
+    if not bidders:
+        return False
+    return all(bool(b.get("synthetic")) for b in bidders)
+
+
 def _shared_address_or_directors(bidders: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return a list of {address, names} groups that share address or directors."""
     groups: list[dict[str, Any]] = []
@@ -58,6 +72,12 @@ def bid_analyzer_node(state: ProcurementState) -> ProcurementState:
     citations: list[str] = []
     errors: list[str] = []
 
+    # When every bidder is a prototype fixture, stamp the bidder-derived
+    # flags so the dashboard can show provenance. Contract-level rules
+    # (alt-mode / HoPE approval) reflect real procurement metadata, not
+    # bidder fixtures, so they stay unmarked regardless.
+    synthetic = _is_synthetic_bidders(bidders)
+
     # Rule 1: bidder count (only relevant for open competitive bidding)
     if procurement_type == "public_bidding" and len(bidders) > 0 and len(bidders) < MIN_BIDDERS_OPEN_BIDDING:
         flags.append({
@@ -67,6 +87,7 @@ def bid_analyzer_node(state: ProcurementState) -> ProcurementState:
             "iiueeu": "IR",
             "severity": 4,
             "bidder_count": len(bidders),
+            "synthetic": synthetic,
             "description": (
                 f"Open competitive bidding has only {len(bidders)} bidder(s);"
                 f" minimum of {MIN_BIDDERS_OPEN_BIDDING} is required."
@@ -86,6 +107,7 @@ def bid_analyzer_node(state: ProcurementState) -> ProcurementState:
                 "severity": 5,
                 "bidder_name": None,
                 "evidence": group,
+                "synthetic": synthetic,
                 "description": (
                     f"Suspicious bidder collusion: {group['reason']} for {', '.join(group['names'])}."
                 ),
@@ -124,6 +146,7 @@ def bid_analyzer_node(state: ProcurementState) -> ProcurementState:
                 "iiueeu": "IR",
                 "severity": 4,
                 "bidder_name": b.get("name"),
+                "synthetic": bool(b.get("synthetic")),
                 "nfc_declared": nfc,
                 "contract_amount": contract_amount,
                 "description": (

@@ -20,7 +20,8 @@ from src.orchestration.state import ProcurementState, SVP_THRESHOLD_PHP
 
 
 def _flag(flag: str, citation: str, law: str, iiueeu: str, severity: int,
-          missing_doc: str | None, bidder_name: str | None, description: str) -> dict[str, Any]:
+          missing_doc: str | None, bidder_name: str | None, description: str,
+          *, synthetic: bool | None = None) -> dict[str, Any]:
     return {
         "flag": flag,
         "citation": citation,
@@ -30,6 +31,7 @@ def _flag(flag: str, citation: str, law: str, iiueeu: str, severity: int,
         "missing_doc": missing_doc,
         "bidder_name": bidder_name,
         "description": description,
+        "synthetic": synthetic,
     }
 
 
@@ -81,6 +83,7 @@ def doc_auditor_node(state: ProcurementState) -> ProcurementState:
                 missing_doc="PhilGEPS Certificate of Registration",
                 bidder_name=name,
                 description=f"Bidder '{name}' has no PhilGEPS certificate of registration.",
+                synthetic=bool(b.get("synthetic")),
             ))
             citations.append("COA 2023-004 Annex A Item 1")
 
@@ -95,6 +98,7 @@ def doc_auditor_node(state: ProcurementState) -> ProcurementState:
                 missing_doc="Mayor's / Business Permit",
                 bidder_name=name,
                 description=f"Bidder '{name}' has no valid business permit on file.",
+                synthetic=bool(b.get("synthetic")),
             ))
             citations.append("COA 2023-004 Annex A Item 2")
 
@@ -112,6 +116,7 @@ def doc_auditor_node(state: ProcurementState) -> ProcurementState:
                     f"Bidder '{name}' did not post bid security for competitive"
                     f" bidding over PHP {SVP_THRESHOLD_PHP:,.0f}."
                 ),
+                synthetic=bool(b.get("synthetic")),
             ))
             citations.append("RA 12009 IRR Sec 45.1")
 
@@ -129,6 +134,7 @@ def doc_auditor_node(state: ProcurementState) -> ProcurementState:
                     f"Bidder '{name}' has no PCAB license for this"
                     f" {procurement_type} contract."
                 ),
+                synthetic=bool(b.get("synthetic")),
             ))
             citations.append("RA 12009 IRR Annex H Appendix A Sec 3")
 

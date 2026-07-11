@@ -69,18 +69,23 @@ class TestPriceAnalysis:
     """Tests for price analysis node."""
 
     def test_unknown_price_without_market_data(self, monkeypatch, sample_state):
-        """When no market data is available, fallback baseline kicks in."""
+        """With no market data and no cache, the node reports ``unknown``.
+
+        It must NOT fabricate a baseline derived from the audited price
+        (amount / 1.30) — that would make the inflation threshold equal to
+        the amount and the node could never flag inflation. We assert the
+        honest ``unknown`` end-state instead of the old non-detecting fallback.
+        """
         from src.orchestration.agents import price as price_mod
 
         monkeypatch.setattr(price_mod, "get_cached_market_price", lambda _: None)
         sample_state["contract_amount"] = 100_000
         result = price_analysis_node(sample_state)
 
-        # No cache -> estimated_baseline is computed (amount / 1.30),
-        # which means the flag will NOT be "unknown".
-        assert result["price_findings"]["flag"] in {"normal", "unknown"}
-        assert result["price_findings"]["baseline"] is not None
-        assert result["price_findings"]["source"] == "estimated_baseline"
+        assert result["price_findings"]["flag"] == "unknown"
+        assert result["price_findings"]["baseline"] is None
+        assert result["price_findings"]["inflation_threshold"] is None
+        assert result["price_findings"]["source"] == "unavailable"
 
     def test_cached_market_price_flags_inflation(self, monkeypatch, sample_state):
         """Cached market data exposes inflation when over threshold."""

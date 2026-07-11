@@ -3,21 +3,33 @@ Redis cache for RedFlag Agents PH.
 """
 
 import json
+import os
 from typing import Any
 
 import redis
 
 
-REDIS_URL = "redis://localhost:6379"
+# Module-level default so existing importers that read `cache.REDIS_URL`
+# keep working. ``get_redis`` re-resolves from the env on every *miss* so
+# a Redis URL set after import (tests, late ``load_dotenv``) is honoured.
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
 _client = None
+_client_url: str | None = None
 
 
 def get_redis() -> redis.Redis:
-    """Get Redis client."""
-    global _client
-    if _client is None:
-        _client = redis.from_url(REDIS_URL, decode_responses=True)
+    """Get Redis client.
+
+    Lazily creates and caches the client. If ``REDIS_URL`` changes in the
+    environment after the client was first built, the next call rebuilds
+    it against the new URL.
+    """
+    global _client, _client_url
+    current_url = os.environ.get("REDIS_URL", REDIS_URL)
+    if _client is None or _client_url != current_url:
+        _client = redis.from_url(current_url, decode_responses=True)
+        _client_url = current_url
     return _client
 
 

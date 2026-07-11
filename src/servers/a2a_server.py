@@ -24,6 +24,7 @@ per A2A Section 5.4 ("JSON Field Naming Convention").
 """
 from __future__ import annotations
 
+import abc
 import asyncio
 import json
 import logging
@@ -284,6 +285,33 @@ class _StoredTask:
     # timestamps are tracked via the underlying status["timestamp"].
     updated_at: float = field(default_factory=time.time)
 
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-safe dict for Redis etc."""
+        return {
+            "id": self.id,
+            "context_id": self.context_id,
+            "state": self.state,
+            "status": self.status,
+            "artifacts": list(self.artifacts),
+            "history": list(self.history),
+            "result_output": self.result_output,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> _StoredTask:
+        """Deserialize from a dict returned by to_dict()."""
+        return cls(
+            id=d["id"],
+            context_id=d["context_id"],
+            state=d["state"],
+            status=d["status"],
+            artifacts=list(d.get("artifacts", [])),
+            history=list(d.get("history", [])),
+            result_output=d.get("result_output"),
+            updated_at=d.get("updated_at", time.time()),
+        )
+
     def to_wire(self) -> dict:
         """Serialize to the v1.0 JSON shape."""
         return {
@@ -304,25 +332,201 @@ class _A2AError(Exception):
         self.data = data or {}
 
 
+# ---------------------------------------------------------------------------
+# Task Store — pluggable backend for persisting A2A tasks
+# ---------------------------------------------------------------------------
+
+
+class TaskStore(abc.ABC):
+    """Abstract task store for A2A ``_StoredTask`` records.
+
+    Implementations must be safe for concurrent access. Methods that
+    mutate state (``set``, ``delete``) are expected to be idempotent
+    from the caller's perspective.
+    """
+
+    @abc.abstractmethod
+    async def get(self, task_id: str) -> _StoredTask | None: ...
+
+    @abc.abstractmethod
+    async def set(self, task: _StoredTask) -> None: ...
+
+    @abc.abstractmethod
+    async def delete(self, task_id: str) -> None: ...
+
+    @abc.abstractmethod
+    async def list_all(self) -> list[_StoredTask]: ...
+
+    @abc.abstractmethod
+    async def size(self) -> int: ...
+
+
+class InMemoryTaskStore(TaskStore):
+    """In-memory dict-backed store.
+
+    This is the default used when Redis is not configured. Tasks are
+    lost on process restart — fine for dev, prototyping, and CI.
+    """
+
+    def __init__(self) -> None:
+        self._tasks: dict[str, _StoredTask] = {}
+
+    async def get(self, task_id: str) -> _StoredTask | None:
+        return self._tasks.get(task_id)
+
+    async def set(self, task: _StoredTask) -> None:
+        self._tasks[task.id] = task
+
+    async def delete(self, task_id: str) -> None:
+        self._tasks.pop(task_id, None)
+
+    async def list_all(self) -> list[_StoredTask]:
+        return list(self._tasks.values())
+
+    async def size(self) -> int:
+        return len(self._tasks)
+
+
+class RedisTaskStore(TaskStore):
+    """Redis-backed task store.
+
+    Each task is stored as a JSON-serialised string under ``a2a:task:{id}``.
+    A Redis Sorted Set ``a2a:tasks`` holds ``(id, updated_at)`` pairs so
+    ``list_all()`` can return tasks in reverse-update order without loading
+    every key.
+
+    Falls back to :class:`InMemoryTaskStore` if ``get_redis()`` raises
+    (e.g. Redis not running), so the system degrades gracefully.
+    """
+
+    KEY_TASK = "a2a:task:{}"
+    KEY_INDEX = "a2a:tasks"
+
+    def __init__(self) -> None:
+        self._fallback: InMemoryTaskStore | None = None
+        self._r = None
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _redis(self) -> Any | None:
+        """Return the Redis client, or ``None`` to signal fallback."""
+        if self._fallback is not None:
+            return None  # already decided to fall back
+        if self._r is None:
+            try:
+                from src.services.cache import get_redis
+
+                self._r = get_redis()
+                # Sanity-check: ping the server.
+                self._r.ping()
+            except Exception:
+                logger.warning("Redis not available; A2A tasks stored in memory")
+                self._fallback = InMemoryTaskStore()
+                return None
+        return self._r
+
+    async def _ensure_fallback(self) -> InMemoryTaskStore:
+        if self._fallback is None:
+            self._fallback = InMemoryTaskStore()
+        return self._fallback
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    async def get(self, task_id: str) -> _StoredTask | None:
+        r = self._redis()
+        if r is None:
+            fb = await self._ensure_fallback()
+            return await fb.get(task_id)
+        raw = r.get(self.KEY_TASK.format(task_id))
+        if raw is None:
+            return None
+        try:
+            return _StoredTask.from_dict(json.loads(raw))
+        except Exception:
+            logger.exception("failed to deserialize task %s", task_id)
+            return None
+
+    async def set(self, task: _StoredTask) -> None:
+        r = self._redis()
+        if r is None:
+            fb = await self._ensure_fallback()
+            await fb.set(task)
+            return
+        key = self.KEY_TASK.format(task.id)
+        raw = json.dumps(task.to_dict(), default=str)
+        pipe = r.pipeline()
+        pipe.set(key, raw)
+        pipe.zadd(self.KEY_INDEX, {task.id: task.updated_at})
+        pipe.execute()
+
+    async def delete(self, task_id: str) -> None:
+        r = self._redis()
+        if r is None:
+            fb = await self._ensure_fallback()
+            await fb.delete(task_id)
+            return
+        key = self.KEY_TASK.format(task_id)
+        pipe = r.pipeline()
+        pipe.delete(key)
+        pipe.zrem(self.KEY_INDEX, task_id)
+        pipe.execute()
+
+    async def list_all(self) -> list[_StoredTask]:
+        r = self._redis()
+        if r is None:
+            fb = await self._ensure_fallback()
+            return await fb.list_all()
+        # Fetch task IDs ordered by updated_at DESC.
+        ids = r.zrevrange(self.KEY_INDEX, 0, -1)
+        if not ids:
+            return []
+        # Pipeline-get all at once.
+        pipe = r.pipeline()
+        for tid in ids:
+            pipe.get(self.KEY_TASK.format(tid))
+        raws = pipe.execute()
+        tasks: list[_StoredTask] = []
+        for raw in raws:
+            if raw is None:
+                continue
+            try:
+                tasks.append(_StoredTask.from_dict(json.loads(raw)))
+            except Exception:
+                continue
+        return tasks
+
+    async def size(self) -> int:
+        r = self._redis()
+        if r is None:
+            fb = await self._ensure_fallback()
+            return await fb.size()
+        return r.zcard(self.KEY_INDEX)
 
 
 # ---------------------------------------------------------------------------
-# A2AServer - in-process A2A v1.0 compliant server
+# A2AServer - A2A v1.0 compliant server
 # ---------------------------------------------------------------------------
 
 
 class A2AServer:
     """A2A v1.0 server.
 
-    Tracks tasks in-process. For multi-process deployments swap
-    ``self._tasks`` for a Redis-backed dict.
+    Tasks are persisted in the injected ``store`` (default
+    :class:`InMemoryTaskStore`). Pass a :class:`RedisTaskStore` when
+    Redis is configured for process-restart survival.
 
     All public ``op_*`` methods are coroutine-safe via ``asyncio.Lock``.
     """
 
-    def __init__(self, base_url: str = "http://localhost:8000") -> None:
+    def __init__(self,
+                 base_url: str = "http://localhost:8000",
+                 store: TaskStore | None = None) -> None:
         self.base_url = base_url
-        self._tasks: dict = {}
+        self._store: TaskStore = store or InMemoryTaskStore()
         self._lock = asyncio.Lock()
 
     # ---- Agent Card ---------------------------------------------------
@@ -348,7 +552,7 @@ class A2AServer:
                 status=task_status(TASK_STATE_SUBMITTED),
                 history=[initial_message] if initial_message else [],
             )
-            self._tasks[task.id] = task
+            await self._store.set(task)
             return task
 
     async def _transition(self, task: _StoredTask,
@@ -358,7 +562,8 @@ class A2AServer:
             task.state = new_state
             task.status = task_status(new_state, message=message)
             task.updated_at = time.time()
-        # Emit outside the lock to avoid any risk of reentrancy.
+        # Persist, then emit (both outside the lock).
+        await self._store.set(task)
         await self._emit_task_event(task)
 
 
@@ -409,9 +614,11 @@ class A2AServer:
         if skill == "agent_card":
             return self.get_agent_card()
         if skill == "list":
+            all_tasks = await self._store.list_all()
+            recent = sorted(all_tasks, key=lambda t: t.updated_at, reverse=True)[:50]
             return {
-                "tasks": [t.to_wire() for t in list(self._tasks.values())[-50:]],
-                "total": len(self._tasks),
+                "tasks": [t.to_wire() for t in recent],
+                "total": await self._store.size(),
             }
         if skill == "cancel":
             return {"status": "canceled"}
@@ -427,13 +634,32 @@ class A2AServer:
             }
         if skill == "price_check":
             amount = float(params.get("contract_amount", 0))
-            baseline = amount * 0.7
+            market_price = params.get("market_price")
+            if market_price is not None and float(market_price) > 0:
+                from src.orchestration.state import PRICE_EXCESS_THRESHOLD_PCT
+                multiplier = 1.0 + (PRICE_EXCESS_THRESHOLD_PCT / 100.0)
+                baseline = float(market_price)
+                threshold = baseline * multiplier
+                pct_above = ((amount - baseline) / baseline) * 100.0
+                inflated = amount > threshold
+                return {
+                    "amount": amount,
+                    "market_price": baseline,
+                    "inflation_threshold": round(threshold, 2),
+                    "pct_above_market": round(pct_above, 1),
+                    "flag": "potential_inflation" if inflated else "normal",
+                    "reason": (
+                        f"Price exceeds market baseline by >{PRICE_EXCESS_THRESHOLD_PCT:.0f}%"
+                        if inflated
+                        else "Price within market baseline allowance"
+                    ),
+                }
             return {
                 "amount": amount,
-                "baseline": baseline,
-                "flag": ("potential_inflation"
-                         if amount > baseline
-                         else "normal"),
+                "market_price": None,
+                "inflation_threshold": None,
+                "flag": "unknown",
+                "reason": "No market_price supplied; cannot compare",
             }
         if skill == "search":
             return {"results": [],
@@ -450,6 +676,8 @@ class A2AServer:
                     "compliant": len(missing) == 0}
 
         # Default = full audit
+        bidders_raw = params.get("bidders")
+        bidders = list(bidders_raw) if isinstance(bidders_raw, list) else []
         return analyze_procurement(
             contract_id=str(params.get("contract_id")
                            or f"PO-A2A-{uuid.uuid4().hex[:8]}"),
@@ -457,8 +685,11 @@ class A2AServer:
                                     or "Procurement from A2A"),
             contract_amount=float(params.get("contract_amount") or 0),
             agency=str(params.get("agency") or ""),
+            source=str(params.get("source") or "A2A"),
+            svp_category=str(params.get("svp_category") or "general"),
             procurement_type=str(params.get("procurement_type")
                                 or "public_bidding"),
+            bidders=bidders,
             hope_approval_proof=bool(params.get("hope_approval_proof", False)),
         )
 
@@ -520,19 +751,19 @@ class A2AServer:
             task.status = task_status(TASK_STATE_COMPLETED, message=assistant_msg)
             task.result_output = output
             task.updated_at = time.time()
+        await self._store.set(task)
         await self._emit_task_event(task)
         return task.to_wire()
 
-    def op_get_task(self, *,
+    async def op_get_task(self, *,
                      id: str,
                      history_length: int | None = None,
                      tenant: str | None = None) -> dict:
         """tasks/get (Section 3.1.3)."""
-        task = self._tasks.get(id)
+        task = await self._store.get(id)
         if task is None:
             self._raise(A2A_TASK_NOT_FOUND, data={"task_id": id})
         wire = task.to_wire()
-        # History length semantics per Section 3.2.4.
         if history_length == 0:
             wire.pop("history", None)
         elif history_length is not None and history_length > 0:
@@ -541,7 +772,7 @@ class A2AServer:
 
 
 
-    def op_list_tasks(self, *,
+    async def op_list_tasks(self, *,
                         context_id: str | None = None,
                         status: str | None = None,
                         page_size: int | None = None,
@@ -551,10 +782,9 @@ class A2AServer:
                         tenant: str | None = None) -> dict:
         """tasks/list (Section 3.1.4).
 
-        Cursor-paginated over the in-memory dict using ``updated_at`` order.
-        For production swap for a database cursor.
+        Paginated over stored tasks ordered by ``updated_at`` DESC.
         """
-        all_tasks = list(self._tasks.values())
+        all_tasks = await self._store.list_all()
         if context_id:
             all_tasks = [t for t in all_tasks if t.context_id == context_id]
         if status:
@@ -582,7 +812,6 @@ class A2AServer:
         out_tasks: list[dict] = []
         for t in page:
             wire = t.to_wire()
-            # Per spec artifacts MUST be omitted entirely when false.
             if include_artifacts is False:
                 wire.pop("artifacts", None)
             if history_length == 0:
@@ -602,7 +831,7 @@ class A2AServer:
                         tenant: str | None = None,
                         metadata: dict | None = None) -> dict:
         """tasks/cancel (Section 3.1.5). Idempotent on terminal tasks."""
-        task = self._tasks.get(id)
+        task = await self._store.get(id)
         if task is None:
             self._raise(A2A_TASK_NOT_FOUND, data={"task_id": id})
         if task.state in TERMINAL_TASK_STATES:
@@ -618,6 +847,7 @@ class A2AServer:
             task.state = TASK_STATE_CANCELED
             task.status = task_status(TASK_STATE_CANCELED, message=note)
             task.updated_at = time.time()
+            await self._store.set(task)
         await self._emit_task_event(task)
         return task.to_wire()
 
@@ -651,7 +881,7 @@ class A2AServer:
         connect to the SSE endpoint at ``stream_url`` for ongoing
         state transition events.
         """
-        task = self._tasks.get(id)
+        task = await self._store.get(id)
         if task is None:
             self._raise(A2A_TASK_NOT_FOUND, data={"task_id": id})
         return {

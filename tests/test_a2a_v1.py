@@ -221,10 +221,10 @@ class TestGetTask:
         from src.servers.a2a_server import A2AServer, _StoredTask, task_status as _ts
 
         server = A2AServer("http://localhost:8000")
-        server._tasks["task-fake"] = _StoredTask(
+        asyncio.run(server._store.set(_StoredTask(
             id="task-fake", context_id="ctx-fake",
             state=TASK_STATE_COMPLETED, status=_ts(TASK_STATE_COMPLETED),
-        )
+        )))
         resp = asyncio.run(_send(server, method="tasks/get", params={"id": "task-fake"}))
         assert resp["result"]["id"] == "task-fake"
         assert resp["result"]["context_id"] == "ctx-fake"
@@ -242,11 +242,11 @@ class TestGetTask:
         )
 
         server = A2AServer("http://localhost:8000")
-        server._tasks["task-h"] = _StoredTask(
+        asyncio.run(server._store.set(_StoredTask(
             id="task-h", context_id="ctx-h",
             state=TASK_STATE_COMPLETED, status=_ts(TASK_STATE_COMPLETED),
             history=[{"messageId": "any", "role": "user", "parts": []}],
-        )
+        )))
         resp = asyncio.run(_send(server, method="tasks/get",
                                  params={"id": "task-h", "history_length": 0}))
         assert "history" not in resp["result"]
@@ -274,10 +274,10 @@ class TestListTasks:
         server = A2AServer("http://localhost:8000")
         for i in range(2):
             state = TASK_STATE_COMPLETED if i == 0 else TASK_STATE_CANCELED
-            server._tasks[f"task-{i}"] = _StoredTask(
+            asyncio.run(server._store.set(_StoredTask(
                 id=f"task-{i}", context_id=f"ctx-{i}",
                 state=state, status=_ts(state),
-            )
+            )))
         resp = asyncio.run(_send(server, method="tasks/list",
                                  params={"status": TASK_STATE_COMPLETED}))
         ids = [t["id"] for t in resp["result"]["tasks"]]
@@ -302,10 +302,10 @@ class TestCancelTask:
         from src.servers.a2a_server import A2AServer, _StoredTask, task_status as _ts
 
         server = A2AServer("http://localhost:8000")
-        server._tasks["task-done"] = _StoredTask(
+        asyncio.run(server._store.set(_StoredTask(
             id="task-done", context_id="ctx",
             state=TASK_STATE_COMPLETED, status=_ts(TASK_STATE_COMPLETED),
-        )
+        )))
         resp = asyncio.run(
             _send(server, method="tasks/cancel", params={"id": "task-done"})
         )
@@ -323,10 +323,10 @@ class TestCancelTask:
         from src.servers.a2a_server import A2AServer, _StoredTask, task_status as _ts
 
         server = A2AServer("http://localhost:8000")
-        server._tasks["task-stuck"] = _StoredTask(
+        asyncio.run(server._store.set(_StoredTask(
             id="task-stuck", context_id="ctx",
             state=TASK_STATE_WORKING, status=_ts(TASK_STATE_WORKING),
-        )
+        )))
         resp = asyncio.run(
             _send(server, method="tasks/cancel", params={"id": "task-stuck"})
         )
@@ -370,10 +370,10 @@ class TestDisabledByCapability:
         from src.servers.a2a_server import _StoredTask, task_status as _ts
 
         server = _server()
-        server._tasks["task-sub"] = _StoredTask(
+        asyncio.run(server._store.set(_StoredTask(
             id="task-sub", context_id="ctx-sub",
             state=TASK_STATE_COMPLETED, status=_ts(TASK_STATE_COMPLETED),
-        )
+        )))
         resp = asyncio.run(
             _send(server, method="tasks/subscribe",
                   params={"id": "task-sub"}),
@@ -487,7 +487,7 @@ class TestTaskEvents:
             id="task-ev-1", context_id="ctx-ev-1",
             state=TASK_STATE_WORKING, status=_ts(TASK_STATE_WORKING),
         )
-        server._tasks["task-ev-1"] = task
+        await server._store.set(task)
 
         # Subscribe *before* the transition so there's no race.
         ready = asyncio.Event()
@@ -563,7 +563,7 @@ class TestTaskEvents:
             id="task-ev-2", context_id="ctx-ev-2",
             state=TASK_STATE_WORKING, status=_ts(TASK_STATE_WORKING),
         )
-        server._tasks["task-ev-2"] = task
+        await server._store.set(task)
 
         ready = asyncio.Event()
         received: list[dict] = []
@@ -616,10 +616,10 @@ class TestSSEEndpoint:
 
         with TestClient(api_main.app) as client:
             server = A2AServer("http://testserver")
-            server._tasks["task-sse-c"] = _StoredTask(
+            asyncio.run(server._store.set(_StoredTask(
                 id="task-sse-c", context_id="ctx-sse-c",
                 state=TASK_STATE_COMPLETED, status=_ts(TASK_STATE_COMPLETED),
-            )
+            )))
             old = api_main.a2a_server
             api_main.a2a_server = server
             try:
@@ -648,10 +648,10 @@ class TestSSEEndpoint:
 
         with TestClient(api_main.app) as client:
             server = A2AServer("http://testserver")
-            server._tasks["task-sse-ct"] = _StoredTask(
+            asyncio.run(server._store.set(_StoredTask(
                 id="task-sse-ct", context_id="ctx-ct",
                 state=TASK_STATE_COMPLETED, status=_ts(TASK_STATE_COMPLETED),
-            )
+            )))
             old = api_main.a2a_server
             api_main.a2a_server = server
             try:

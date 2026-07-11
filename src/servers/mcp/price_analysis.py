@@ -78,6 +78,10 @@ async def compare_market_price(
     """
     Flag potentially inflated prices by comparing to market rates.
 
+    Searches Exa for historical procurement prices of the same item and
+    compares the reported price against the lowest found contract amount
+    (conservative baseline). Flags when price exceeds baseline by >30%.
+
     Args:
         item_name: Item description
         reported_price: Reported contract price
@@ -98,15 +102,47 @@ async def compare_market_price(
             "reason": "No market data found for comparison",
         }
 
-    # Basic flag logic: if we have market data, flag prices 30% above typical
-    baseline_estimate = reported_price * 0.7  # Assume market rate is ~70% of inflated
+    # Extract PHP amounts from snippet text.
+    import re
+
+    prices: list[float] = []
+    for r in results:
+        snippet: str = (r.get("snippet") or r.get("text") or "")
+        for match in re.finditer(
+            r"(?:PHP|P|₱)?\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)", snippet
+        ):
+            try:
+                prices.append(float(match.group(1).replace(",", "")))
+            except ValueError:
+                continue
+
+    if not prices:
+        return {
+            "item": item_name,
+            "reported_price": reported_price,
+            "unit": unit,
+            "flag": "unknown",
+            "reason": "No numerical price data could be parsed from results",
+        }
+
+    baseline_estimate = min(p for p in prices if p > 0)
+    threshold = baseline_estimate * 1.30
+    pct_above = ((reported_price - baseline_estimate) / baseline_estimate) * 100.0
+    inflated = reported_price > threshold
 
     return {
         "item": item_name,
         "reported_price": reported_price,
         "unit": unit,
-        "flag": "potential_inflation" if reported_price > baseline_estimate else "normal",
-        "baseline_estimate": baseline_estimate,
+        "baseline": round(baseline_estimate, 2),
+        "inflation_threshold": round(threshold, 2),
+        "pct_above_market": round(pct_above, 1),
+        "flag": "potential_inflation" if inflated else "normal",
+        "reason": (
+            f"Price exceeds market baseline by >30% (pct_above_market={pct_above:.1f}%)"
+            if inflated
+            else f"Price within 30% baseline allowance ({pct_above:.1f}% above)"
+        ),
         "market_sources_count": len(results),
     }
 

@@ -69,6 +69,12 @@ def _build_bidders(proc: dict[str, Any]) -> list[dict[str, Any]]:
     agency_name = proc.get("agency", "")
     acronym = _map_agency_to_acronym(agency_name)
 
+    # IMPORTANT: these bidders are SYNTHETIC — fabricated from the awardee
+    # name and an agency-derived stub so the prototype can exercise the
+    # bid_analyzer / doc_auditor nodes without real PhilGEPS bidder-list
+    # pages (which require an authenticated Platinum session). Every synthetic
+    # bidder is tagged with ``synthetic: True`` so the orchestrator and
+    # dashboard can distinguish prototype signal from real collusion signal.
     bidders = [
         {
             "name": awardee,
@@ -81,12 +87,14 @@ def _build_bidders(proc: dict[str, Any]) -> list[dict[str, Any]]:
                 "business_permit": True,
                 "bid_security": proc.get("contract_amount", 0) * 0.02,
             },
+            "synthetic": True,
         },
-        # Second synthetic bidder (often a competitor with shared address
-        # to trigger dummy_bidders detection in the prototype)
+        # Second synthetic bidder (a competitor with a SHARED address so the
+        # prototype surfaces the dummy_bidders flag). Do NOT remove the
+        # shared address — it's the fixture for collusion detection.
         {
             "name": f"{acronym} Supplies Co.",
-            # Intentionally same address to surface collusion flag
+            # Intentionally same address to surface the collusion flag.
             "address": "Quezon City, Metro Manila (synthetic)",
             "directors": ["Director B"],
             "pcab_license": "67890",
@@ -96,6 +104,7 @@ def _build_bidders(proc: dict[str, Any]) -> list[dict[str, Any]]:
                 "business_permit": True,
                 "bid_security": proc.get("contract_amount", 0) * 0.02,
             },
+            "synthetic": True,
         },
     ]
     return bidders
@@ -148,6 +157,24 @@ async def auto_crawl_agency(
             )
 
             results["analyzed"] += 1
+
+            # Cache the contract amount as a market-price baseline so the
+            # orchestrator's price_analysis_node can reference it on subsequent
+            # runs. Uses a cleaned keyword derived from the procurement title.
+            # Redis-unavailable errors are silently ignored.
+            try:
+                from src.services.cache import cache_market_price
+                # Derive a short item key from the title (first 2-3 words).
+                words = (title or "").split()
+                if len(words) >= 3:
+                    item_key = " ".join(words[:3]).strip(",;:.").lower()
+                elif len(words) >= 1:
+                    item_key = " ".join(words).strip(",;:.").lower()
+                else:
+                    item_key = "uncategorised"
+                cache_market_price(item_key, float(amount))
+            except Exception:
+                pass
 
             anomalies = result.get("anomalies", [])
             if anomalies:

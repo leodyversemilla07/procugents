@@ -20,7 +20,19 @@ from src.orchestration.state import ProcurementState
 logger = logging.getLogger(__name__)
 
 # Module-level LLM cache so multiple node invocations reuse the client.
+# Invalidated when the environment changes (e.g.
+# OPENCODE_API_KEY removed, OPENAI_API_KEY added after first call).
 _LLM_CACHE: dict[str, Any] = {}
+_LLM_CACHE_ENV: dict[str, str | None] = {}  # snapshot of API keys at cache time
+
+
+def _env_snapshot() -> dict[str, str | None]:
+    """Return a dict of the three API-key env vars the LLM resolution reads."""
+    return {
+        "OPENCODE_API_KEY": os.environ.get("OPENCODE_API_KEY"),
+        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+        "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
+    }
 
 
 def _try_langchain_openai(model: str, **kwargs) -> Any:
@@ -30,13 +42,24 @@ def _try_langchain_openai(model: str, **kwargs) -> Any:
 
 
 def get_llm() -> Any | None:
-    """Return a configured ChatModel, or None if no provider is set."""
-    if "llm" in _LLM_CACHE:
+    """Return a configured ChatModel, or None if no provider is set.
+
+    Caches the LLM client across invocations for performance, but
+    re-resolves from scratch whenever the API-key environment variables
+    change (e.g. an operator sets OPENAI_API_KEY after initial start-up
+    or removes OPENCODE_API_KEY to force a different provider).
+    """
+    current_env = _env_snapshot()
+    if "llm" in _LLM_CACHE and current_env == _LLM_CACHE_ENV:
         return _LLM_CACHE["llm"]
 
-    opencode_key = os.environ.get("OPENCODE_API_KEY")
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    # Environment changed or first call — clear stale cache and re-probe.
+    _LLM_CACHE.clear()
+    _LLM_CACHE_ENV.clear()
+
+    opencode_key = current_env.get("OPENCODE_API_KEY")
+    openai_key = current_env.get("OPENAI_API_KEY")
+    anthropic_key = current_env.get("ANTHROPIC_API_KEY")
 
     if opencode_key:
         try:
@@ -47,6 +70,7 @@ def get_llm() -> Any | None:
                 default_headers={"x-opencode-provider": "opencode"},
             )
             _LLM_CACHE["llm"] = llm
+            _LLM_CACHE_ENV.update(current_env)
             return llm
         except Exception as exc:  # pragma: no cover
             msg = str(exc).lower()
@@ -57,6 +81,7 @@ def get_llm() -> Any | None:
         try:
             llm = _try_langchain_openai("gpt-4o-mini", api_key=openai_key)
             _LLM_CACHE["llm"] = llm
+            _LLM_CACHE_ENV.update(current_env)
             return llm
         except Exception:  # pragma: no cover
             logger.warning("OpenAI client construction failed")
@@ -71,6 +96,7 @@ def get_llm() -> Any | None:
                 temperature=0,
             )
             _LLM_CACHE["llm"] = llm
+            _LLM_CACHE_ENV.update(current_env)
             return llm
         except Exception:  # pragma: no cover
             logger.warning("Anthropic client construction failed")

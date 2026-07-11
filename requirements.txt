@@ -5,6 +5,7 @@
 # Pinned versions match `uv.lock`; trim with care.
 
 # --- Runtime ---
+alembic>=1.13.0
 beautifulsoup4>=4.12.0
 fastapi>=0.110.0
 fastmcp>=2.0.0
