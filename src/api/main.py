@@ -518,6 +518,8 @@ def get_analysis_detail(
 
 class AlertResolveRequest(BaseModel):
     resolution_notes: str = ""
+    false_positive: bool = False
+    fp_category: str | None = None
 
 
 @app.get("/api/alerts")
@@ -555,6 +557,8 @@ def list_alerts(
                     "contract_id": a.contract_id,
                     "status": a.status,
                     "resolution_notes": a.resolution_notes,
+                    "false_positive": bool(a.false_positive) if a.false_positive is not None else False,
+                    "fp_category": a.fp_category,
                     "created_at": a.created_at.isoformat() if a.created_at else None,
                     "resolved_at": a.resolved_at.isoformat() if a.resolved_at else None,
                 }
@@ -574,7 +578,7 @@ def resolve_alert(
     body: AlertResolveRequest,
     db: Session = Depends(get_db),
 ):
-    """Mark an alert as resolved (optionally with notes)."""
+    """Mark an alert as resolved (optionally with notes / false-positive designation)."""
     from datetime import UTC, datetime
     from src.services.database import Alert as AlertModel
 
@@ -587,6 +591,10 @@ def resolve_alert(
         alert.resolved_at = datetime.now(UTC)
         if body.resolution_notes:
             alert.resolution_notes = body.resolution_notes
+        if body.false_positive:
+            alert.false_positive = 1
+        if body.fp_category is not None:
+            alert.fp_category = body.fp_category
         db.commit()
         db.refresh(alert)
 
@@ -596,6 +604,8 @@ def resolve_alert(
             "status": alert.status,
             "resolved_at": alert.resolved_at.isoformat() if alert.resolved_at else None,
             "resolution_notes": alert.resolution_notes,
+            "false_positive": bool(alert.false_positive) if alert.false_positive is not None else False,
+            "fp_category": alert.fp_category,
         }
     except HTTPException:
         raise

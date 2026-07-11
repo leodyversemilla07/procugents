@@ -1,6 +1,15 @@
 "use client";
 
-import { ArrowLeft, Bell, CheckCircle, Clock, FileText, ShieldAlert } from "lucide-react";
+import {
+	ArrowLeft,
+	Bell,
+	CheckCircle,
+	Clock,
+	FileText,
+	Flag,
+	ShieldAlert,
+	ThumbsDown,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
 	Pagination,
 	PaginationContent,
@@ -24,6 +34,14 @@ import {
 	PaginationNext,
 	PaginationPrevious,
 } from "@/components/ui/pagination";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import {
 	Table,
 	TableBody,
@@ -44,6 +62,8 @@ interface AlertItem {
 	contract_id: string;
 	status: string;
 	resolution_notes: string | null;
+	false_positive: boolean;
+	fp_category: string | null;
 	created_at: string | null;
 	resolved_at: string | null;
 }
@@ -56,6 +76,15 @@ interface AlertsResponse {
 }
 
 const ITEMS_PER_PAGE = 15;
+
+const FP_CATEGORIES = [
+	{ value: "threshold_too_low", label: "Threshold too low (legitimate expense)" },
+	{ value: "data_stale", label: "Stale market data" },
+	{ value: "incorrect_baseline", label: "Wrong market baseline" },
+	{ value: "duplicate_alert", label: "Duplicate alert" },
+	{ value: "legitimate_competitive", label: "Legitimate competitive process" },
+	{ value: "other", label: "Other" },
+] as const;
 
 function formatDate(raw: string | null): string {
 	if (!raw) return "—";
@@ -83,6 +112,8 @@ export default function AlertsPage() {
 	const [resolveTarget, setResolveTarget] = useState<AlertItem | null>(null);
 	const [resolveNotes, setResolveNotes] = useState("");
 	const [resolveOpen, setResolveOpen] = useState(false);
+	const [resolveIsFP, setResolveIsFP] = useState(false);
+	const [resolveFPCategory, setResolveFPCategory] = useState<string | null>(null);
 	const [resolving, setResolving] = useState(false);
 
 	const fetchAlerts = useCallback(async () => {
@@ -112,6 +143,8 @@ export default function AlertsPage() {
 	const openResolveDialog = (alert: AlertItem) => {
 		setResolveTarget(alert);
 		setResolveNotes(alert.resolution_notes || "");
+		setResolveIsFP(false);
+		setResolveFPCategory(null);
 		setResolveOpen(true);
 	};
 
@@ -122,7 +155,11 @@ export default function AlertsPage() {
 			await fetch(`/api/alerts/${resolveTarget.id}`, {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ resolution_notes: resolveNotes }),
+				body: JSON.stringify({
+					resolution_notes: resolveNotes,
+					false_positive: resolveIsFP,
+					fp_category: resolveIsFP ? resolveFPCategory || "other" : null,
+				}),
 			});
 			setResolveOpen(false);
 			setResolveTarget(null);
@@ -134,13 +171,8 @@ export default function AlertsPage() {
 		}
 	};
 
+	const fpCount = alerts.filter((a) => a.false_positive).length;
 	const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
-
-	const stats = {
-		total,
-		open: alerts.filter((a) => a.status !== "resolved").length,
-		resolved: total - alerts.filter((a) => a.status !== "resolved").length,
-	};
 
 	return (
 		<div className="min-h-screen bg-background p-6">
@@ -149,52 +181,74 @@ export default function AlertsPage() {
 				<div className="flex items-center gap-3 mb-2">
 					<Link href="/">
 						<Button variant="ghost" size="sm">
-							<ArrowLeft className="h-4 w-4 mr-1" /> Dashboard
+							<ArrowLeft className="size-4 mr-1" /> Dashboard
 						</Button>
 					</Link>
 				</div>
 				<h1 className="text-2xl font-semibold flex items-center gap-3">
-					<Bell className="h-6 w-6" />
+					<Bell className="size-6" />
 					Alert Management
 				</h1>
 				<p className="text-muted-foreground mt-1">
-					Review, filter, and resolve procurement anomaly alerts
+					Review, filter, resolve, and mark false-positive procurement anomaly alerts
 				</p>
 			</header>
 
 			{/* Stats */}
-			<div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+			<div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
 				<Card>
 					<CardHeader className="pb-2 flex flex-row items-center gap-3">
-						<ShieldAlert className="h-5 w-5 text-muted-foreground" />
+						<ShieldAlert className="size-5 text-muted-foreground" />
 						<div>
 							<CardDescription className="text-xs uppercase">Total Alerts</CardDescription>
 						</div>
 					</CardHeader>
 					<CardContent>
-						<div className="text-3xl font-bold">{stats.total}</div>
+						<div className="text-3xl font-bold">{total}</div>
 					</CardContent>
 				</Card>
 				<Card>
 					<CardHeader className="pb-2 flex flex-row items-center gap-3">
-						<Clock className="h-5 w-5 text-amber-500" />
+						<Clock className="size-5 text-amber-500" />
 						<div>
 							<CardDescription className="text-xs uppercase">Open</CardDescription>
 						</div>
 					</CardHeader>
 					<CardContent>
-						<div className="text-3xl font-bold text-amber-500">{stats.open}</div>
+						<div className="text-3xl font-bold text-amber-500">
+							{total - alerts.filter((a) => a.status === "resolved").length}
+						</div>
 					</CardContent>
 				</Card>
 				<Card>
 					<CardHeader className="pb-2 flex flex-row items-center gap-3">
-						<CheckCircle className="h-5 w-5 text-green-500" />
+						<CheckCircle className="size-5 text-green-500" />
 						<div>
 							<CardDescription className="text-xs uppercase">Resolved</CardDescription>
 						</div>
 					</CardHeader>
 					<CardContent>
-						<div className="text-3xl font-bold text-green-500">{stats.resolved}</div>
+						<div className="text-3xl font-bold text-green-500">
+							{alerts.filter((a) => a.status === "resolved" && !a.false_positive).length}
+						</div>
+					</CardContent>
+				</Card>
+				<Card>
+					<CardHeader className="pb-2 flex flex-row items-center gap-3">
+						<ThumbsDown className="size-5 text-orange-500" />
+						<div>
+							<CardDescription className="text-xs uppercase">False Positives</CardDescription>
+						</div>
+					</CardHeader>
+					<CardContent>
+						<div className="text-3xl font-bold text-orange-500">
+							{fpCount}
+							{total > 0 && (
+								<span className="text-sm text-muted-foreground ml-2 font-normal">
+									({((fpCount / total) * 100).toFixed(1)}%)
+								</span>
+							)}
+						</div>
 					</CardContent>
 				</Card>
 			</div>
@@ -203,14 +257,14 @@ export default function AlertsPage() {
 			<Card className="mb-6">
 				<CardHeader className="pb-3">
 					<CardTitle className="text-sm flex items-center gap-2">
-						<FileText className="h-4 w-4" />
+						<FileText className="size-4" />
 						Filters
 					</CardTitle>
 				</CardHeader>
 				<CardContent>
 					<div className="flex flex-wrap items-center gap-4">
 						<div>
-							<label className="text-xs text-muted-foreground block mb-1">Status</label>
+							<Label className="text-xs text-muted-foreground block mb-1">Status</Label>
 							<Tabs
 								value={statusFilter ?? ""}
 								onValueChange={(v) => {
@@ -226,7 +280,7 @@ export default function AlertsPage() {
 							</Tabs>
 						</div>
 						<div>
-							<label className="text-xs text-muted-foreground block mb-1">Severity</label>
+							<Label className="text-xs text-muted-foreground block mb-1">Severity</Label>
 							<div className="flex gap-1">
 								{[
 									{ value: null, label: "All" },
@@ -256,7 +310,7 @@ export default function AlertsPage() {
 			<Card>
 				<CardHeader>
 					<CardTitle className="flex items-center gap-2">
-						<ShieldAlert className="h-4 w-4" />
+						<ShieldAlert className="size-4" />
 						Alerts
 					</CardTitle>
 					<CardDescription>
@@ -287,8 +341,9 @@ export default function AlertsPage() {
 										<TableHead>Severity</TableHead>
 										<TableHead>Contract</TableHead>
 										<TableHead>Status</TableHead>
+										<TableHead>FP?</TableHead>
 										<TableHead>Created</TableHead>
-										<TableHead className="w-[140px]">Actions</TableHead>
+										<TableHead className="w-[160px]">Actions</TableHead>
 									</TableRow>
 								</TableHeader>
 								<TableBody>
@@ -298,7 +353,7 @@ export default function AlertsPage() {
 												{a.id}
 											</TableCell>
 											<TableCell
-												className="font-medium max-w-[300px] truncate"
+												className="font-medium max-w-[280px] truncate"
 												title={a.description || a.title}
 											>
 												{a.title}
@@ -316,42 +371,49 @@ export default function AlertsPage() {
 											<TableCell>
 												{a.status === "resolved" ? (
 													<Badge variant="outline" className="text-green-500 border-green-500/30">
-														<CheckCircle className="h-3 w-3 mr-1" /> Resolved
+														<CheckCircle data-icon /> Resolved
 													</Badge>
 												) : (
 													<Badge variant="secondary">
-														<Clock className="h-3 w-3 mr-1" /> Pending
+														<Clock data-icon /> Pending
 													</Badge>
+												)}
+											</TableCell>
+											<TableCell>
+												{a.false_positive ? (
+													<Badge variant="outline" className="text-orange-500 border-orange-500/30">
+														<ThumbsDown data-icon /> FP
+													</Badge>
+												) : (
+													<span className="text-muted-foreground text-xs">—</span>
 												)}
 											</TableCell>
 											<TableCell className="text-xs text-muted-foreground whitespace-nowrap">
 												{formatDate(a.created_at)}
 											</TableCell>
 											<TableCell>
-												<div className="flex gap-1">
-													<Button
-														variant="ghost"
-														size="sm"
-														disabled={a.status === "resolved"}
-														onClick={() => openResolveDialog(a)}
-													>
-														<CheckCircle className="h-3 w-3 mr-1" />
+												{/* Only show Resolve button for non-resolved alerts */}
+												{a.status !== "resolved" && (
+													<Button variant="ghost" size="sm" onClick={() => openResolveDialog(a)}>
+														<CheckCircle data-icon />
 														Resolve
 													</Button>
-												</div>
+												)}
 											</TableCell>
 										</TableRow>
 									))}
 								</TableBody>
 							</Table>
 
-							{/* Resolve Dialog — controlled via page-level state */}
+							{/* Resolve / Mark-False-Positive Dialog */}
 							<Dialog
 								open={resolveOpen}
 								onOpenChange={(open) => {
 									if (!open) {
 										setResolveTarget(null);
 										setResolveNotes("");
+										setResolveIsFP(false);
+										setResolveFPCategory(null);
 									}
 									setResolveOpen(open);
 								}}
@@ -363,18 +425,64 @@ export default function AlertsPage() {
 											<DialogDescription>{resolveTarget.title}</DialogDescription>
 										</DialogHeader>
 										<div className="space-y-4 py-4">
+											{/* Mark as false positive toggle */}
+											<div className="flex items-center gap-2 p-3 bg-muted rounded">
+												<Flag className="size-4 text-orange-500 shrink-0" />
+												<div className="flex items-center gap-2">
+													<button
+														type="button"
+														className={`text-sm font-medium cursor-pointer px-2 py-0.5 rounded transition-colors ${
+															resolveIsFP
+																? "bg-orange-500/20 text-orange-500"
+																: "text-muted-foreground hover:text-foreground"
+														}`}
+														onClick={() => setResolveIsFP(!resolveIsFP)}
+													>
+														{resolveIsFP ? "✓ False Positive" : "Mark as False Positive"}
+													</button>
+												</div>
+											</div>
+
+											{/* FP category selector */}
+											{resolveIsFP && (
+												<div>
+													<Label className="text-sm font-medium">Reason category</Label>
+													<Select value={resolveFPCategory} onValueChange={setResolveFPCategory}>
+														<SelectTrigger className="w-full mt-1">
+															<SelectValue placeholder="Select a reason..." />
+														</SelectTrigger>
+														<SelectContent>
+															<SelectGroup>
+																{FP_CATEGORIES.map((cat) => (
+																	<SelectItem key={cat.value} value={cat.value}>
+																		{cat.label}
+																	</SelectItem>
+																))}
+															</SelectGroup>
+														</SelectContent>
+													</Select>
+												</div>
+											)}
+
+											{/* Resolution notes */}
 											<div>
-												<label className="text-sm font-medium">Resolution notes (optional)</label>
+												<Label className="text-sm font-medium">Resolution notes (optional)</Label>
 												<Input
-													placeholder="e.g. Verified with COA, amount was within threshold"
+													placeholder={
+														resolveIsFP
+															? "e.g. Verified with end-user, amount reflects actual market rate"
+															: "e.g. Verified with COA, amount was within threshold"
+													}
 													value={resolveNotes}
 													onChange={(e) => setResolveNotes(e.target.value)}
 													className="mt-1"
 												/>
 											</div>
+
+											{/* Alert details */}
 											{resolveTarget.description && (
 												<div>
-													<label className="text-sm font-medium">Description</label>
+													<Label className="text-sm font-medium">Description</Label>
 													<p className="text-sm text-muted-foreground mt-1">
 														{resolveTarget.description}
 													</p>
@@ -397,13 +505,24 @@ export default function AlertsPage() {
 												</div>
 											</div>
 										</div>
-										<DialogFooter>
+										<DialogFooter className="gap-2">
 											<Button variant="outline" onClick={() => setResolveOpen(false)}>
 												Cancel
 											</Button>
-											<Button onClick={handleResolve} disabled={resolving}>
-												{resolving ? "Resolving..." : "Mark as Resolved"}
-											</Button>
+											{resolveIsFP ? (
+												<Button
+													variant="secondary"
+													className="bg-orange-500/20 text-orange-500 hover:bg-orange-500/30"
+													onClick={handleResolve}
+													disabled={resolving || !resolveFPCategory}
+												>
+													{resolving ? "Saving..." : "Dismiss as False Positive"}
+												</Button>
+											) : (
+												<Button onClick={handleResolve} disabled={resolving}>
+													{resolving ? "Resolving..." : "Mark as Resolved"}
+												</Button>
+											)}
 										</DialogFooter>
 									</DialogContent>
 								)}

@@ -19,7 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
-import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Label } from "@/components/ui/label";
 import {
 	Pagination,
 	PaginationContent,
@@ -29,6 +30,15 @@ import {
 	PaginationPrevious,
 } from "@/components/ui/pagination";
 import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import {
 	Table,
 	TableBody,
 	TableCell,
@@ -36,6 +46,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 interface Stats {
 	total_analyzed: number;
@@ -91,6 +102,19 @@ async function fetchAnalysesData(filters: Filters): Promise<AnalysisListItem[]> 
 	return res.json();
 }
 
+async function fetchAgencies(): Promise<string[]> {
+	try {
+		const res = await fetch("/api/analytics/cohorts");
+		const data = await res.json();
+		if (data?.cohorts) {
+			return data.cohorts.map((c: { agency: string }) => c.agency).filter(Boolean);
+		}
+	} catch {
+		/* ignore */
+	}
+	return [];
+}
+
 export default function Dashboard() {
 	const [crawling, setCrawling] = useState(false);
 	const [crawlStatus, setCrawlStatus] = useState("");
@@ -102,6 +126,7 @@ export default function Dashboard() {
 		final_risk_score?: number;
 	}>(null);
 	const [analyses, setAnalyses] = useState<AnalysisListItem[]>([]);
+	const [agencies, setAgencies] = useState<string[]>([]);
 	const [stats, setStats] = useState<Stats>({
 		total_analyzed: 0,
 		anomalies_found: 0,
@@ -134,6 +159,19 @@ export default function Dashboard() {
 			cancelled = true;
 		};
 	}, [filters]);
+
+	// Load agency list once on mount.
+	useEffect(() => {
+		let cancelled = false;
+		async function load() {
+			const list = await fetchAgencies();
+			if (!cancelled) setAgencies(list);
+		}
+		void load();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	/**
 	 * WebSocket subscription: stream live alert events into the page.
@@ -268,19 +306,6 @@ export default function Dashboard() {
 		setPage(1);
 	};
 
-	const toggleAlertedOnly = () => {
-		setFilters((prev) => ({ ...prev, alerted_only: !prev.alerted_only }));
-		setPage(1);
-	};
-
-	const toggleRiskFilter = (threshold: number | null) => {
-		setFilters((prev) => ({
-			...prev,
-			min_risk: prev.min_risk === threshold ? null : threshold,
-		}));
-		setPage(1);
-	};
-
 	const hasActiveFilters =
 		filters.q !== "" || filters.agency !== "" || filters.min_risk !== null || filters.alerted_only;
 
@@ -306,14 +331,14 @@ export default function Dashboard() {
 					</h1>
 					<div className="flex items-center gap-2">
 						<Link href="/analytics">
-							<Button variant="ghost" size="sm" className="gap-2">
-								<BarChart3 className="h-4 w-4" />
+							<Button variant="ghost" size="sm">
+								<BarChart3 data-icon />
 								Analytics
 							</Button>
 						</Link>
 						<Link href="/alerts">
-							<Button variant="outline" size="sm" className="gap-2">
-								<Bell className="h-4 w-4" />
+							<Button variant="outline" size="sm">
+								<Bell data-icon />
 								Alerts
 								{stats.active_alerts > 0 && (
 									<Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
@@ -334,7 +359,7 @@ export default function Dashboard() {
 				<Card>
 					<CardHeader className="pb-2">
 						<CardDescription className="text-xs uppercase flex items-center gap-2">
-							<FileText className="h-3 w-3" /> Contracts Analyzed
+							<FileText className="size-3" /> Contracts Analyzed
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -344,7 +369,7 @@ export default function Dashboard() {
 				<Card>
 					<CardHeader className="pb-2">
 						<CardDescription className="text-xs uppercase flex items-center gap-2">
-							<FileText className="h-3 w-3 text-destructive" /> Anomalies Found
+							<FileText className="size-3 text-destructive" /> Anomalies Found
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -373,7 +398,7 @@ export default function Dashboard() {
 			<Card className="mb-8">
 				<CardHeader>
 					<CardTitle className="flex items-center gap-2">
-						<Bot className="h-5 w-5" /> Automated Detection
+						<Bot className="size-5" /> Automated Detection
 					</CardTitle>
 					<CardDescription>
 						ProcuGents automatically crawls PhilGEPS and detects procurement anomalies
@@ -384,11 +409,11 @@ export default function Dashboard() {
 						<Button onClick={triggerCrawl} disabled={crawling} size="lg">
 							{crawling ? (
 								<span className="flex items-center gap-2">
-									<Bot className="h-4 w-4 animate-pulse" /> Scanning...
+									<Bot className="size-4 animate-pulse" /> Scanning...
 								</span>
 							) : (
 								<span className="flex items-center gap-2">
-									<Bot className="h-4 w-4" /> Start Auto-Detection
+									<Bot className="size-4" /> Start Auto-Detection
 								</span>
 							)}
 						</Button>
@@ -407,14 +432,14 @@ export default function Dashboard() {
 						>
 							<span
 								aria-hidden
-								className={
-									"h-2 w-2 rounded-full " +
-									(liveStatus === "live"
+								className={cn(
+									"inline-block rounded-full",
+									liveStatus === "live"
 										? "bg-green-500"
 										: liveStatus === "reconnecting"
 											? "bg-amber-500 animate-pulse"
-											: "bg-muted")
-								}
+											: "bg-muted",
+								)}
 							/>
 							{liveStatus === "live"
 								? "Live"
@@ -429,7 +454,7 @@ export default function Dashboard() {
 			{/* Live alert banner -- shown briefly after a WS push */}
 			{latestAlert && (
 				<Alert className="mb-6 border-destructive/50 bg-destructive/10">
-					<AlertTriangle className="h-4 w-4 text-destructive" />
+					<AlertTriangle className="size-4 text-destructive" />
 					<AlertDescription className="flex items-center justify-between gap-4">
 						<span>
 							<strong className="font-mono">{latestAlert.contract_id}</strong> flagged{" "}
@@ -441,7 +466,7 @@ export default function Dashboard() {
 							</span>
 						</span>
 						<Button variant="ghost" size="sm" onClick={() => setLatestAlert(null)}>
-							<X className="h-3 w-3" />
+							<X className="size-3" />
 						</Button>
 					</AlertDescription>
 				</Alert>
@@ -452,12 +477,12 @@ export default function Dashboard() {
 				<CardHeader>
 					<CardTitle className="flex items-center justify-between">
 						<span className="flex items-center gap-2">
-							<Filter className="h-4 w-4" />
+							<Filter className="size-4" />
 							Contract History
 						</span>
 						{hasActiveFilters && (
 							<Button variant="ghost" size="sm" onClick={clearFilters} className="text-xs">
-								<X className="h-3 w-3 mr-1" /> Clear filters
+								<X className="size-3 mr-1" /> Clear filters
 							</Button>
 						)}
 					</CardTitle>
@@ -470,13 +495,15 @@ export default function Dashboard() {
 				<CardContent className="space-y-4">
 					{/* Filter bar */}
 					<div className="flex flex-wrap items-end gap-3 p-3 bg-muted/30 rounded-lg">
-						<div className="flex-1 min-w-[200px]">
-							<label className="text-xs text-muted-foreground mb-1 block">
+						<div className="flex-1 min-w-50">
+							<Label className="text-xs text-muted-foreground mb-1 block">
 								Search ID / description
-							</label>
-							<div className="relative">
-								<Search className="h-3 w-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-								<Input
+							</Label>
+							<InputGroup className="h-8">
+								<InputGroupAddon>
+									<Search className="size-3 text-muted-foreground" />
+								</InputGroupAddon>
+								<InputGroupInput
 									placeholder="e.g. NBCC-2024 or 'chairs'"
 									value={searchInput}
 									onChange={(e) => {
@@ -488,58 +515,78 @@ export default function Dashboard() {
 									onKeyDown={(e) => {
 										if (e.key === "Enter") applyFilters();
 									}}
-									className="pl-7 h-8 text-sm"
 								/>
-							</div>
+							</InputGroup>
 						</div>
-						<div className="flex-1 min-w-[200px]">
-							<label className="text-xs text-muted-foreground mb-1 block">Agency</label>
-							<Input
-								placeholder="e.g. DepEd, DOH"
-								value={agencyInput}
-								onChange={(e) => {
-									setAgencyInput(e.target.value);
-									if (e.target.value === "") {
-										setFilters((prev) => ({ ...prev, agency: "" }));
-									}
+						<div className="flex-1 min-w-50">
+							<Label className="text-xs text-muted-foreground mb-1 block">Agency</Label>
+							<Select
+								value={agencyInput || null}
+								onValueChange={(v) => {
+									const val = v ?? "";
+									setAgencyInput(val);
+									setFilters((prev) => ({ ...prev, agency: val }));
 								}}
-								onKeyDown={(e) => {
-									if (e.key === "Enter") applyFilters();
-								}}
-								className="h-8 text-sm"
-							/>
-						</div>
-						<Button variant="secondary" size="sm" onClick={applyFilters} className="h-8">
-							Apply
-						</Button>
-						<div className="flex flex-wrap gap-1 items-center">
-							<span className="text-xs text-muted-foreground mr-1">Risk:</span>
-							{([null, 1, 2, 3, 4] as const).map((threshold) => {
-								const active = filters.min_risk === threshold;
-								const label = threshold === null ? "Any" : `${threshold}+`;
-								return (
-									<Badge
-										key={String(threshold)}
-										variant={active ? "default" : "outline"}
-										className="cursor-pointer"
-										onClick={() => toggleRiskFilter(threshold)}
-									>
-										{label}
-									</Badge>
-								);
-							})}
-							<Badge
-								variant={filters.alerted_only ? "destructive" : "outline"}
-								className="cursor-pointer"
-								onClick={toggleAlertedOnly}
 							>
-								Alerts only
-							</Badge>
+								<SelectTrigger className="w-full h-8 text-sm">
+									<SelectValue placeholder="All agencies" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectGroup>
+										<SelectItem value={null}>All agencies</SelectItem>
+										{agencies.map((a) => (
+											<SelectItem key={a} value={a}>
+												{a}
+											</SelectItem>
+										))}
+									</SelectGroup>
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="min-w-40">
+							<Label className="text-xs text-muted-foreground mb-1 block">Min. Risk</Label>
+							<Select
+								value={filters.min_risk !== null ? String(filters.min_risk) : null}
+								onValueChange={(v) => {
+									setFilters((prev) => ({
+										...prev,
+										min_risk: v === null ? null : Number(v),
+									}));
+								}}
+							>
+								<SelectTrigger className="w-full h-8 text-sm">
+									<SelectValue placeholder="Any" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectGroup>
+										<SelectItem value={null}>Any</SelectItem>
+										<SelectItem value="1">1+</SelectItem>
+										<SelectItem value="2">2+</SelectItem>
+										<SelectItem value="3">3+</SelectItem>
+										<SelectItem value="4">4+</SelectItem>
+										<SelectItem value="5">5</SelectItem>
+									</SelectGroup>
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="flex items-end gap-2 pb-px">
+							<div className="flex items-center gap-2 h-8">
+								<Switch
+									id="alerted-only"
+									checked={filters.alerted_only}
+									onCheckedChange={(checked) => {
+										setFilters((prev) => ({ ...prev, alerted_only: checked }));
+									}}
+								/>
+								<Label htmlFor="alerted-only" className="text-xs cursor-pointer">
+									Alerts only
+								</Label>
+							</div>
 						</div>
 					</div>
 
 					{analyses.length === 0 ? (
-						<Empty className="min-h-[300px]">
+						<Empty className="min-h-75">
 							<EmptyTitle>
 								{hasActiveFilters ? "No contracts match your filters" : "No contracts analyzed yet"}
 							</EmptyTitle>
@@ -574,7 +621,7 @@ export default function Dashboard() {
 													className="hover:underline flex items-center gap-2"
 												>
 													{a.contract_id}
-													{a.anomalies_count > 0 && <ArrowRight className="h-3 w-3" />}
+													{a.anomalies_count > 0 && <ArrowRight className="size-3" />}
 												</Link>
 											</TableCell>
 											<TableCell>{a.agency || "-"}</TableCell>

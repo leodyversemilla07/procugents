@@ -1,9 +1,9 @@
 """LLM Analysis agent for the ProcuGents orchestrator.
 
 Optional node that performs LLM-powered deep analysis using LangChain.
-Three providers are attempted in order (OpenCode free tier → OpenAI →
-Anthropic); if none is configured the node writes ``llm_analysis``
-marked unavailable and the workflow continues.
+Four providers are attempted in order (OpenCode free tier → NVIDIA NIM →
+OpenAI → Anthropic); if none is configured the node writes
+``llm_analysis`` marked unavailable and the workflow continues.
 
 Falls back to the rule-based pipeline silently if the LLM is unavailable
 or raises so the rest of the graph still runs.
@@ -21,15 +21,16 @@ logger = logging.getLogger(__name__)
 
 # Module-level LLM cache so multiple node invocations reuse the client.
 # Invalidated when the environment changes (e.g.
-# OPENCODE_API_KEY removed, OPENAI_API_KEY added after first call).
+# NVIDIA_API_KEY removed, OPENAI_API_KEY added after first call).
 _LLM_CACHE: dict[str, Any] = {}
 _LLM_CACHE_ENV: dict[str, str | None] = {}  # snapshot of API keys at cache time
 
 
 def _env_snapshot() -> dict[str, str | None]:
-    """Return a dict of the three API-key env vars the LLM resolution reads."""
+    """Return a dict of the API-key env vars the LLM resolution reads."""
     return {
         "OPENCODE_API_KEY": os.environ.get("OPENCODE_API_KEY"),
+        "NVIDIA_API_KEY": os.environ.get("NVIDIA_API_KEY"),
         "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
     }
@@ -58,13 +59,14 @@ def get_llm() -> Any | None:
     _LLM_CACHE_ENV.clear()
 
     opencode_key = current_env.get("OPENCODE_API_KEY")
+    nvidia_key = current_env.get("NVIDIA_API_KEY")
     openai_key = current_env.get("OPENAI_API_KEY")
     anthropic_key = current_env.get("ANTHROPIC_API_KEY")
 
     if opencode_key:
         try:
             llm = _try_langchain_openai(
-                "minimax-m2.5-free",
+                "mimo-v2.5-free",
                 api_key=opencode_key,
                 base_url="https://opencode.ai/zen/v1",
                 default_headers={"x-opencode-provider": "opencode"},
@@ -76,6 +78,19 @@ def get_llm() -> Any | None:
             msg = str(exc).lower()
             if "rate" in msg or "429" in msg or "limit" in msg:
                 logger.info("Minimax rate limited, will try fallback on first use")
+
+    if nvidia_key:
+        try:
+            llm = _try_langchain_openai(
+                "meta/llama-3.3-70b-instruct",
+                api_key=nvidia_key,
+                base_url="https://integrate.api.nvidia.com/v1",
+            )
+            _LLM_CACHE["llm"] = llm
+            _LLM_CACHE_ENV.update(current_env)
+            return llm
+        except Exception:  # pragma: no cover
+            logger.warning("NVIDIA NIM client construction failed")
 
     if openai_key:
         try:
@@ -111,8 +126,8 @@ def llm_analysis_node(state: ProcurementState) -> ProcurementState:
         state["llm_analysis"] = {
             "available": False,
             "note": (
-                "Set OPENCODE_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY"
-                " for LLM analysis"
+                "Set OPENCODE_API_KEY, NVIDIA_API_KEY, OPENAI_API_KEY, or"
+                " ANTHROPIC_API_KEY for LLM analysis"
             ),
         }
         return state
