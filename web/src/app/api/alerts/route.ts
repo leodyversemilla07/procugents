@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { API_HEADERS } from "@/lib/api-headers"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
     const qs = params.toString()
     const url = `${API_BASE}/api/alerts${qs ? `?${qs}` : ""}`
 
-    const res = await fetch(url, { headers: { "Content-Type": "application/json" } })
+    const res = await fetch(url, { headers: API_HEADERS })
     if (!res.ok) {
       return NextResponse.json(
         { error: `Backend returned ${res.status}` },

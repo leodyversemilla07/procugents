@@ -149,6 +149,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting + optional API key auth
+from src.api.security import install_security_middleware  # noqa: E402
+
+install_security_middleware(app)
+
 
 class ProcurementRequest(BaseModel):
     contract_id: str
@@ -723,7 +728,18 @@ async def ws_alerts(websocket: WebSocket):
     The protocol is line-delimited JSON; every message is one
     ``{"channel": str, "event": dict}`` envelope as published by the
     EventBus.
+
+    Authentication (when ``API_KEY`` is set): the client must pass
+    ``?token=<api_key>`` as a query parameter.
     """
+    from src.api.security import API_KEY
+
+    if API_KEY:
+        token = websocket.query_params.get("token", "")
+        if token != API_KEY:
+            await websocket.close(code=1008)
+            return
+
     await websocket.accept()
     from src.services.events import bus
 

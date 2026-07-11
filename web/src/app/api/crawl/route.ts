@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { API_HEADERS } from "@/lib/api-headers"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest) {
     
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: API_HEADERS,
     })
 
     if (!res.ok) {

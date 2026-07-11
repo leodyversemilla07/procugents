@@ -5,7 +5,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 export async function GET() {
   try {
     const res = await fetch(`${API_BASE}/api/stats`, {
-      headers: { "Content-Type": "application/json" },
+      headers: API_HEADERS,
     })
     const data = await res.json()
     return NextResponse.json(data)
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
     const res = await fetch(`${API_BASE}/api/analyze`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: API_HEADERS,
       body: JSON.stringify({
         contract_id,
         contract_description,

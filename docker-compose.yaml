@@ -48,6 +48,7 @@ services:
       - EXA_API_KEY=${EXA_API_KEY:-}
       - CRAWL_INTERVAL_MINUTES=${CRAWL_INTERVAL_MINUTES:-}
       - PHILGEPS_LIVE=${PHILGEPS_LIVE:-}
+      - API_KEY=${API_KEY:-}
     volumes:
       - ./data:/app/data
     healthcheck:
