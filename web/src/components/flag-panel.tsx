@@ -81,8 +81,8 @@ export function FlagPanel({
 				<p className="text-xs text-muted-foreground">{emptyMessage}</p>
 			) : (
 				<div className="space-y-2">
-					{flags.map((f, i) => (
-						<FlagItem key={`${f.flag}-${i}`} flag={f} />
+					{flags.map((f) => (
+						<FlagItem key={f.flag} flag={f} />
 					))}
 				</div>
 			)}

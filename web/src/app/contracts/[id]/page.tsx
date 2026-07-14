@@ -113,7 +113,7 @@ function SectionCard({
 	);
 }
 
-function keyValue(label: string, value: unknown): string {
+function keyValue(_label: string, value: unknown): string {
 	if (value === null || value === undefined) return "—";
 	if (typeof value === "boolean") return value ? "Yes" : "No";
 	if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
@@ -253,8 +253,8 @@ export default function ContractDetailPage() {
 			{contract.all_citations && contract.all_citations.length > 0 && (
 				<SectionCard title="Citations" icon={<FileText className="h-4 w-4" />}>
 					<ul className="list-disc list-inside space-y-1 text-sm">
-						{contract.all_citations.map((c, i) => (
-							<li key={i} className="font-mono text-xs">
+						{contract.all_citations.map((c) => (
+							<li key={c} className="font-mono text-xs">
 								{c}
 							</li>
 						))}
@@ -269,8 +269,11 @@ export default function ContractDetailPage() {
 					icon={<AlertTriangle className="h-4 w-4" />}
 				>
 					<div className="space-y-3">
-						{anomalies.map((a, i) => (
-							<Alert key={i} variant={a.severity === "high" ? "destructive" : "default"}>
+						{anomalies.map((a) => (
+							<Alert
+								key={`${a.type}-${a.description}`}
+								variant={a.severity === "high" ? "destructive" : "default"}
+							>
 								<Badge
 									variant={a.severity === "high" ? "destructive" : "secondary"}
 									className="mr-2"
@@ -292,8 +295,11 @@ export default function ContractDetailPage() {
 					icon={<ShieldAlert className="h-4 w-4" />}
 				>
 					<div className="space-y-2">
-						{contract.alerts.map((a, i) => (
-							<div key={i} className="flex items-center gap-2 p-3 bg-muted rounded">
+						{contract.alerts.map((a) => (
+							<div
+								key={`${a.title}-${a.severity}-${a.description}`}
+								className="flex items-center gap-2 p-3 bg-muted rounded"
+							>
 								<Badge variant={a.severity === "high" ? "destructive" : "secondary"}>
 									{a.severity}
 								</Badge>

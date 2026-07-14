@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
 	Table,
 	TableBody,
@@ -177,8 +178,11 @@ export default function AnalyticsPage() {
 				<CardContent>
 					<div className="flex flex-wrap items-end gap-3">
 						<div>
-							<label className="text-xs text-muted-foreground block mb-1">From</label>
+							<Label htmlFor="filter-from" className="text-xs text-muted-foreground block mb-1">
+								From
+							</Label>
 							<Input
+								id="filter-from"
 								type="date"
 								value={minDate}
 								onChange={(e) => setMinDate(e.target.value)}
@@ -186,8 +190,11 @@ export default function AnalyticsPage() {
 							/>
 						</div>
 						<div>
-							<label className="text-xs text-muted-foreground block mb-1">To</label>
+							<Label htmlFor="filter-to" className="text-xs text-muted-foreground block mb-1">
+								To
+							</Label>
 							<Input
+								id="filter-to"
 								type="date"
 								value={maxDate}
 								onChange={(e) => setMaxDate(e.target.value)}
@@ -195,8 +202,11 @@ export default function AnalyticsPage() {
 							/>
 						</div>
 						<div>
-							<label className="text-xs text-muted-foreground block mb-1">Min risk score</label>
+							<label htmlFor="filter-min-risk" className="text-xs text-muted-foreground block mb-1">
+								Min risk score
+							</label>
 							<Input
+								id="filter-min-risk"
 								type="number"
 								min={1}
 								max={5}

@@ -30,4 +30,6 @@ dashboard/node_modules/
 
 # OS
 .DS_Store
-Thumbs.dbbackend.log
+Thumbs.db
+backend.log
+web/dev.log
