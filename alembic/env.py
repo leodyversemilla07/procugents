@@ -35,10 +35,7 @@ config = context.config
 #   3. Fall back to the runtime ``DATABASE_URL`` resolved by the
 #      application so the CLI just works against the same DB the app uses.
 configured_url = config.get_main_option("sqlalchemy.url")
-if configured_url:
-    DATABASE_URL_OVERRIDE = configured_url
-else:
-    DATABASE_URL_OVERRIDE = DATABASE_URL
+DATABASE_URL_OVERRIDE = configured_url if configured_url else DATABASE_URL
 config.set_main_option("sqlalchemy.url", DATABASE_URL_OVERRIDE)
 
 if config.config_file_name is not None:

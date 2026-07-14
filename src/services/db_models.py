@@ -111,7 +111,7 @@ class Alert(Base):
     status = Column(String(20), default="pending")
     resolution_notes = Column(Text)
     false_positive = Column(Integer, default=0)  # boolean — 1 = dismissed as FP
-    fp_category = Column(String(50), nullable=True)  # e.g. "threshold_too_low", "data_stale", "incorrect_baseline", "other"
+    fp_category = Column(String(50), nullable=True)  # e.g. threshold_too_low,
     created_at = Column(DateTime, default=utc_now)
     resolved_at = Column(DateTime, nullable=True)
 
