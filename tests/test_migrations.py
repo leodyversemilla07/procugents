@@ -172,7 +172,7 @@ def test_alembic_baseline_migration_creates_tables(tmp_path):
         revision = next(
             cur.execute("SELECT version_num FROM alembic_version")
         )[0]
-        assert revision == "2026_07_08_00"
+        assert revision == "311a544d848f"
     finally:
         con.close()
 
@@ -226,6 +226,6 @@ def test_alembic_downgrade_then_upgrade(tmp_path):
         assert "procurement_analysis" in rows
         assert "alembic_version" in rows
         rev = next(con.execute("SELECT version_num FROM alembic_version"))[0]
-        assert rev == "2026_07_08_00"
+        assert rev == "311a544d848f"
     finally:
         con.close()
